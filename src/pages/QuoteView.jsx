@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import QuotePdfTemplate from '../components/QuotePdfTemplate'
-import { generateQuotePdfBlob, pdfFileNameFor, buildWhatsAppMessage, normalizePhone } from '../utils/pdf'
+import { generateQuotePdfBlob, pdfFileNameFor } from '../utils/pdf'
 
 export default function QuoteView() {
   const { id } = useParams()
@@ -81,25 +81,14 @@ export default function QuoteView() {
     }
   }
 
-  // WhatsApp's public sharing surface (wa.me links, and third-party file shares via the OS
-  // share sheet) doesn't let any web app open a SPECIFIC chat, prefill a caption, AND attach a
-  // file all in one atomic action - that combination just isn't exposed by WhatsApp's platform,
-  // for any app. So this does the next best thing, as two quick steps:
-  //   1. Open that customer's chat directly with the greeting message ready to send (reliable).
-  //   2. Hand off the PDF - either the native share sheet (pick WhatsApp again to attach it to
-  //      the same chat) or an automatic download if the browser can't share files, so it's ready
-  //      to attach manually.
+  // WhatsApp's public sharing surface doesn't let any app (not just us - no app can) jump to
+  // one specific chat with a file already attached. The only file-sharing hook available to a
+  // web app is the OS's native share sheet, which is exactly how "share to WhatsApp" works from
+  // every app on the phone - tap Share, pick WhatsApp, pick the contact, send.
   async function handleShareWhatsApp() {
     setActionError(null)
     setShareNote(null)
     setSharing(true)
-
-    const phone = normalizePhone(quote.customerPhone)
-    const message = buildWhatsAppMessage(quote)
-
-    // Open the chat FIRST, synchronously with the click - opening it after an awaited PDF
-    // generation risks the browser treating it as a popup and blocking it.
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank')
 
     try {
       const blob = await ensurePdfBlob()
@@ -107,7 +96,6 @@ export default function QuoteView() {
       const file = new File([blob], fileName, { type: 'application/pdf' })
 
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        setShareNote('Chat opened with your message ready - now pick WhatsApp again to attach the PDF.')
         await navigator.share({ files: [file], title: fileName })
       } else {
         // No file-sharing support (mostly desktop browsers) - download it automatically instead.
@@ -117,7 +105,7 @@ export default function QuoteView() {
         a.download = fileName
         a.click()
         URL.revokeObjectURL(url)
-        setShareNote('Chat opened with your message ready - the PDF downloaded, attach it there manually.')
+        setShareNote('Your browser can\'t open the share sheet directly - the PDF downloaded, attach it in WhatsApp manually.')
       }
     } catch (err) {
       // AbortError just means the user closed the native share sheet - not a real error.
