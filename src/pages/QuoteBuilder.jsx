@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import RoomBlock from '../components/RoomBlock'
 import { parseDescription, buildDescription } from '../components/ItemRow'
@@ -11,6 +11,8 @@ function todayISO() {
 
 export default function QuoteBuilder() {
   const { id } = useParams()
+  const [searchParams] = useSearchParams()
+  const duplicateFromId = searchParams.get('from')
   const navigate = useNavigate()
   const isEdit = Boolean(id)
   const keyCounter = useRef(0)
@@ -113,6 +115,31 @@ export default function QuoteBuilder() {
           setLoadError(err.message || 'Could not load this quote')
           setLoading(false)
         })
+    } else if (duplicateFromId) {
+      api
+        .getQuote(duplicateFromId)
+        .then((q) => {
+          if (cancelled) return
+          // Customer fields deliberately left blank - this is a fresh quote for a (likely
+          // different) customer, only the room/item/rate structure is being reused.
+          setQuoteDate(todayISO())
+          setRooms(q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()])
+          setExpandedRoomKey(null) // collapsed - this is pre-filled content to review, not a blank form
+          setAccessoriesDescription(q.accessoriesDescription || '')
+          setAccessoriesAmount(q.accessoriesAmount != null ? String(q.accessoriesAmount) : '')
+          setMaterialSpecItems(
+            q.materialSpecItems && q.materialSpecItems.length ? q.materialSpecItems.map(mapSpecFromApi) : []
+          )
+          setTermItems(q.termItems && q.termItems.length ? q.termItems.map(mapTermFromApi) : [])
+          setRoundedTotal(q.roundedTotal != null ? String(q.roundedTotal) : '')
+          setRoundedTotalTouched(true)
+          setLoading(false)
+        })
+        .catch((err) => {
+          if (cancelled) return
+          setLoadError(err.message || 'Could not load the quote to duplicate')
+          setLoading(false)
+        })
     } else {
       const firstRoom = emptyRoom()
       setRooms([firstRoom])
@@ -135,7 +162,7 @@ export default function QuoteBuilder() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
+  }, [id, duplicateFromId])
 
   // ---- live totals ----
   const subtotal = useMemo(() => {
@@ -304,10 +331,15 @@ export default function QuoteBuilder() {
         <button className="qb-header-back" onClick={() => navigate('/')} aria-label="Back">
           ←
         </button>
-        <h1 className="qb-header-title">{isEdit ? 'Edit Quote' : 'New Quote'}</h1>
+        <h1 className="qb-header-title">{isEdit ? 'Edit Quote' : duplicateFromId ? 'Duplicate Quote' : 'New Quote'}</h1>
       </header>
 
       <main className="qb-body">
+        {duplicateFromId && (
+          <div className="qb-duplicate-banner">
+            Rooms, items, and rates copied over - fill in the new customer's details below.
+          </div>
+        )}
         {/* ---- Customer details ---- */}
         <section className="qb-section">
           <h2 className="qb-section-title">Customer Details</h2>
@@ -509,6 +541,16 @@ export default function QuoteBuilder() {
         }
         .qb-body {
           padding: 18px 20px 0;
+        }
+        .qb-duplicate-banner {
+          background: var(--sage-light);
+          color: var(--sage);
+          border: 1px solid var(--sage);
+          border-radius: 11px;
+          padding: 11px 14px;
+          font-size: 13px;
+          font-weight: 500;
+          margin-bottom: 16px;
         }
         .qb-section {
           background: var(--paper);

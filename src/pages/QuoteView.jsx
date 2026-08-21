@@ -12,10 +12,11 @@ export default function QuoteView() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
 
-  const [generating, setGenerating] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const [sharing, setSharing] = useState(false)
   const [pdfBlob, setPdfBlob] = useState(null)
   const [actionError, setActionError] = useState(null)
+  const [shareNote, setShareNote] = useState(null)
 
   const captureRef = useRef(null) // full-size, off-screen - used for actual PDF capture
   const previewContainerRef = useRef(null)
@@ -55,84 +56,77 @@ export default function QuoteView() {
     return () => window.removeEventListener('resize', recalc)
   }, [quote])
 
-  async function handleGenerate() {
-    setActionError(null)
-    setGenerating(true)
-    try {
-      const blob = await generateQuotePdfBlob(captureRef.current)
-      setPdfBlob(blob)
-      const url = URL.createObjectURL(blob)
-      window.open(url, '_blank')
-    } catch (err) {
-      setActionError(err.message || 'Could not generate the PDF')
-    } finally {
-      setGenerating(false)
-    }
+  async function ensurePdfBlob() {
+    if (pdfBlob) return pdfBlob
+    const blob = await generateQuotePdfBlob(captureRef.current)
+    setPdfBlob(blob)
+    return blob
   }
 
   async function handleDownload() {
-    let blob = pdfBlob
-    if (!blob) {
-      setGenerating(true)
-      try {
-        blob = await generateQuotePdfBlob(captureRef.current)
-        setPdfBlob(blob)
-      } catch (err) {
-        setActionError(err.message || 'Could not generate the PDF')
-        setGenerating(false)
-        return
-      }
-      setGenerating(false)
+    setActionError(null)
+    setDownloading(true)
+    try {
+      const blob = await ensurePdfBlob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = pdfFileNameFor(quote.customerName)
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setActionError(err.message || 'Could not generate the PDF')
+    } finally {
+      setDownloading(false)
     }
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = pdfFileNameFor(quote.customerName)
-    a.click()
-    URL.revokeObjectURL(url)
   }
 
+  // WhatsApp's public sharing surface (wa.me links, and third-party file shares via the OS
+  // share sheet) doesn't let any web app open a SPECIFIC chat, prefill a caption, AND attach a
+  // file all in one atomic action - that combination just isn't exposed by WhatsApp's platform,
+  // for any app. So this does the next best thing, as two quick steps:
+  //   1. Open that customer's chat directly with the greeting message ready to send (reliable).
+  //   2. Hand off the PDF - either the native share sheet (pick WhatsApp again to attach it to
+  //      the same chat) or an automatic download if the browser can't share files, so it's ready
+  //      to attach manually.
   async function handleShareWhatsApp() {
     setActionError(null)
+    setShareNote(null)
     setSharing(true)
+
+    const phone = normalizePhone(quote.customerPhone)
+    const message = buildWhatsAppMessage(quote)
+
+    // Open the chat FIRST, synchronously with the click - opening it after an awaited PDF
+    // generation risks the browser treating it as a popup and blocking it.
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank')
+
     try {
-      let blob = pdfBlob
-      if (!blob) {
-        blob = await generateQuotePdfBlob(captureRef.current)
-        setPdfBlob(blob)
-      }
+      const blob = await ensurePdfBlob()
       const fileName = pdfFileNameFor(quote.customerName)
-      const message = buildWhatsAppMessage(quote)
-      const phone = normalizePhone(quote.customerPhone)
       const file = new File([blob], fileName, { type: 'application/pdf' })
 
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], text: message, title: fileName })
+        setShareNote('Chat opened with your message ready - now pick WhatsApp again to attach the PDF.')
+        await navigator.share({ files: [file], title: fileName })
       } else {
-        // Fallback for browsers without file-sharing support (mostly desktop):
-        // download the PDF, then open a WhatsApp chat with the message so it can be attached manually.
+        // No file-sharing support (mostly desktop browsers) - download it automatically instead.
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
         a.download = fileName
         a.click()
         URL.revokeObjectURL(url)
-        window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank')
+        setShareNote('Chat opened with your message ready - the PDF downloaded, attach it there manually.')
       }
     } catch (err) {
       // AbortError just means the user closed the native share sheet - not a real error.
       if (err.name !== 'AbortError') {
-        setActionError(err.message || 'Could not share on WhatsApp')
+        setActionError(err.message || 'Could not prepare the PDF to share')
       }
     } finally {
       setSharing(false)
     }
-  }
-
-  function handleOpenChat() {
-    if (!quote) return
-    const phone = normalizePhone(quote.customerPhone)
-    window.open(`https://wa.me/${phone}`, '_blank')
   }
 
   if (loading) {
@@ -190,24 +184,22 @@ export default function QuoteView() {
           </div>
         </div>
 
+        {shareNote && <p className="qv-note-text">{shareNote}</p>}
         {actionError && <p className="qv-error-text">{actionError}</p>}
 
         <div className="qv-actions">
-          <button className="qv-btn qv-btn-primary" onClick={handleGenerate} disabled={generating}>
-            {generating ? 'Generating…' : 'Generate PDF'}
-          </button>
-          <button className="qv-btn qv-btn-secondary" onClick={handleDownload} disabled={generating}>
-            Download PDF
-          </button>
           <button
             className="qv-btn qv-btn-whatsapp"
             onClick={handleShareWhatsApp}
-            disabled={sharing || generating}
+            disabled={sharing || downloading}
           >
-            {sharing ? 'Sharing…' : 'Share PDF on WhatsApp'}
+            {sharing ? 'Preparing…' : 'Share PDF on WhatsApp'}
           </button>
-          <button className="qv-btn qv-btn-ghost" onClick={handleOpenChat}>
-            Open WhatsApp Chat
+          <button className="qv-btn qv-btn-secondary" onClick={handleDownload} disabled={downloading || sharing}>
+            {downloading ? 'Preparing…' : 'Download PDF'}
+          </button>
+          <button className="qv-btn qv-btn-ghost" onClick={() => navigate(`/quotes/new?from=${id}`)}>
+            Duplicate Quote
           </button>
         </div>
       </main>
@@ -278,6 +270,13 @@ export default function QuoteView() {
           border: 1px solid var(--rule);
           background: var(--paper);
         }
+        .qv-note-text {
+          color: var(--sage);
+          font-size: 12.5px;
+          text-align: center;
+          padding: 14px 8px 0;
+          line-height: 1.5;
+        }
         .qv-error-text {
           color: var(--brick);
           font-size: 13px;
@@ -304,20 +303,15 @@ export default function QuoteView() {
         .qv-btn:active:not(:disabled) {
           transform: scale(0.98);
         }
-        .qv-btn-primary {
-          background: var(--ink);
+        .qv-btn-whatsapp {
+          background: var(--sage);
           color: var(--bg);
-          box-shadow: 0 8px 20px rgba(35, 33, 38, 0.25);
+          box-shadow: 0 8px 20px rgba(107, 143, 113, 0.3);
         }
         .qv-btn-secondary {
           background: var(--paper);
           color: var(--ink);
           border: 1px solid var(--rule);
-        }
-        .qv-btn-whatsapp {
-          background: var(--sage);
-          color: var(--bg);
-          box-shadow: 0 8px 20px rgba(107, 143, 113, 0.3);
         }
         .qv-btn-ghost {
           background: transparent;

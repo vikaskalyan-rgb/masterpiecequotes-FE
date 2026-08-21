@@ -16,6 +16,21 @@ export default function QuotePdfTemplate({ quote }) {
     ...(accessoriesAmount > 0 ? [{ label: 'Fittings', value: accessoriesAmount }] : []),
   ].filter((s) => s.value > 0)
 
+  // Donut chart geometry - each segment drawn as a stroke-dasharray slice of a circle,
+  // rotated -90deg so the first slice starts at 12 o'clock like a normal chart.
+  const donutRadius = 72
+  const donutStrokeWidth = 30
+  const donutCircumference = 2 * Math.PI * donutRadius
+  let cumulativeLength = 0
+  const donutSegments = breakdownSegments.map((seg, i) => {
+    const pct = (seg.value / breakdownTotal) * 100
+    const length = (pct / 100) * donutCircumference
+    const dashArray = `${length.toFixed(2)} ${(donutCircumference - length).toFixed(2)}`
+    const dashOffset = -cumulativeLength
+    cumulativeLength += length
+    return { ...seg, pct, color: BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length], dashArray, dashOffset }
+  })
+
   return (
     <div className="pdf-page">
       <div className="pdf-letterhead">
@@ -103,31 +118,50 @@ export default function QuotePdfTemplate({ quote }) {
 
       {breakdownSegments.length > 1 && (
         <div className="pdf-breakdown">
-          <div className="pdf-breakdown-label">Where Your Investment Goes</div>
-          <div className="pdf-bar">
-            {breakdownSegments.map((seg, i) => (
-              <div
-                key={seg.label}
-                style={{
-                  width: `${((seg.value / breakdownTotal) * 100).toFixed(1)}%`,
-                  background: BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length],
-                }}
-              />
-            ))}
+          <div className="pdf-breakdown-heading">
+            <div className="pdf-breakdown-label">Where Your Investment Goes</div>
+            <div className="pdf-breakdown-line" />
           </div>
-          <div className="pdf-legend">
-            {breakdownSegments.map((seg, i) => (
-              <div className="pdf-legend-item" key={seg.label}>
-                <span
-                  className="pdf-legend-swatch"
-                  style={{ background: BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length] }}
-                />
-                {seg.label}{' '}
-                <span className="pdf-legend-pct mono">
-                  {((seg.value / breakdownTotal) * 100).toFixed(1)}%
-                </span>
+
+          <div className="pdf-breakdown-main">
+            <div className="pdf-donut-wrap">
+              <svg width="180" height="180" viewBox="0 0 180 180">
+                <circle cx="90" cy="90" r={donutRadius} fill="none" stroke="#F1EDE3" strokeWidth={donutStrokeWidth} />
+                <g transform="rotate(-90 90 90)">
+                  {donutSegments.map((seg) => (
+                    <circle
+                      key={seg.label}
+                      cx="90"
+                      cy="90"
+                      r={donutRadius}
+                      fill="none"
+                      stroke={seg.color}
+                      strokeWidth={donutStrokeWidth}
+                      strokeDasharray={seg.dashArray}
+                      strokeDashoffset={seg.dashOffset}
+                      strokeLinecap="butt"
+                    />
+                  ))}
+                </g>
+              </svg>
+              <div className="pdf-donut-center">
+                <div className="pdf-donut-center-label">Total</div>
+                <div className="pdf-donut-center-value mono">{formatRupees(quote.roundedTotal)}</div>
               </div>
-            ))}
+            </div>
+
+            <div className="pdf-stat-grid">
+              {donutSegments.map((seg) => (
+                <div className="pdf-stat-card" key={seg.label}>
+                  <div className="pdf-stat-top">
+                    <span className="pdf-stat-swatch" style={{ background: seg.color }} />
+                    <span className="pdf-stat-label">{seg.label}</span>
+                  </div>
+                  <div className="pdf-stat-pct mono">{seg.pct.toFixed(1)}%</div>
+                  <div className="pdf-stat-amount mono">₹{seg.value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -163,7 +197,7 @@ export default function QuotePdfTemplate({ quote }) {
       <div className="pdf-footer">
         <div className="pdf-signoff">
           Thank you for considering Masterpiece Interiors.
-          <strong>N. Kalyan</strong>
+          <strong>N. Kalyan, Founder</strong>
         </div>
         <div className="pdf-footer-contact">
           <span className="pdf-brass-text">Masterpiece Interiors</span>
@@ -339,48 +373,104 @@ export default function QuotePdfTemplate({ quote }) {
           font-weight: 600;
         }
         .pdf-breakdown {
-          margin-top: 32px;
-          padding: 20px 22px;
+          margin-top: 36px;
+          padding: 32px 34px;
           background: var(--bg);
           border: 1px solid var(--rule);
+          border-radius: 4px;
+        }
+        .pdf-breakdown-heading {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          margin-bottom: 28px;
         }
         .pdf-breakdown-label {
-          font-size: 10px;
-          letter-spacing: 0.12em;
+          font-family: var(--font-display);
+          font-size: 17px;
+          font-weight: 600;
+          color: var(--ink);
+          white-space: nowrap;
+        }
+        .pdf-breakdown-line {
+          flex: 1;
+          height: 1px;
+          background: var(--rule);
+        }
+        .pdf-breakdown-main {
+          display: flex;
+          align-items: center;
+          gap: 36px;
+        }
+        .pdf-donut-wrap {
+          position: relative;
+          width: 180px;
+          height: 180px;
+          flex-shrink: 0;
+        }
+        .pdf-donut-center {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+        }
+        .pdf-donut-center-label {
+          font-size: 9.5px;
+          letter-spacing: 0.1em;
           text-transform: uppercase;
           color: var(--ink-soft);
+          margin-bottom: 5px;
+        }
+        .pdf-donut-center-value {
+          font-size: 17px;
           font-weight: 600;
-          margin-bottom: 12px;
+          color: var(--ink);
         }
-        .pdf-bar {
-          display: flex;
-          width: 100%;
-          height: 10px;
-          border-radius: 2px;
-          overflow: hidden;
-          margin-bottom: 12px;
+        .pdf-stat-grid {
+          flex: 1;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 14px 18px;
         }
-        .pdf-legend {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 14px 20px;
+        .pdf-stat-card {
+          border-left: 3px solid var(--rule);
+          padding: 2px 0 2px 12px;
         }
-        .pdf-legend-item {
+        .pdf-stat-top {
           display: flex;
           align-items: center;
           gap: 6px;
-          font-size: 11.5px;
-          color: var(--ink-soft);
+          margin-bottom: 5px;
         }
-        .pdf-legend-swatch {
+        .pdf-stat-swatch {
           width: 8px;
           height: 8px;
           border-radius: 50%;
           flex-shrink: 0;
         }
-        .pdf-legend-pct {
-          color: var(--ink);
+        .pdf-stat-label {
+          font-size: 11px;
+          color: var(--ink-soft);
           font-weight: 500;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .pdf-stat-pct {
+          font-size: 19px;
+          font-weight: 600;
+          color: var(--ink);
+          line-height: 1.2;
+        }
+        .pdf-stat-amount {
+          font-size: 10.5px;
+          color: var(--ink-soft);
+          margin-top: 2px;
         }
         .pdf-section-heading {
           font-family: var(--font-display);

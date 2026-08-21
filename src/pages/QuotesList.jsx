@@ -75,33 +75,45 @@ export default function QuotesList() {
 
   return (
     <div className="quotes-list-page">
-      <header className="qlp-header">
-        <div className="qlp-header-top">
-          <img src="/icon-192.png" alt="" className="qlp-logo" />
-          <div>
-            <h1 className="qlp-title">Masterpiece</h1>
-            {!loading && !error && quotes.length > 0 && ( 
-              <p className="qlp-stats mono">
-                {stats.count} quote{stats.count !== 1 ? 's' : ''} · {formatRupees(stats.total)}
-              </p>
-            )}
+      <div className="qlp-top">
+        <header className="qlp-header">
+          <div className="qlp-header-top">
+            <img src="/icon-192.png" alt="" className="qlp-logo" />
+            <div className="qlp-header-text">
+              <h1 className="qlp-title">Masterpiece Quotes</h1>
+              {!loading && !error && quotes.length > 0 && (
+                <p className="qlp-stats mono">
+                  {stats.count} quote{stats.count !== 1 ? 's' : ''} · {formatRupees(stats.total)}
+                </p>
+              )}
+            </div>
+            <button className="qlp-settings-btn" onClick={() => navigate('/settings')} aria-label="Settings">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <line x1="3" y1="6" x2="17" y2="6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                <line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                <line x1="3" y1="14" x2="17" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                <circle cx="7" cy="6" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
+                <circle cx="13" cy="10" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
+                <circle cx="9" cy="14" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
+              </svg>
+            </button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <div className="qlp-controls">
-        <div className="qlp-search-wrap">
-          <svg className="qlp-search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M11 11L14.5 14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Search by customer name"
-            value={search}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            className="qlp-search"
-          />
+        <div className="qlp-controls">
+          <div className="qlp-search-wrap">
+            <svg className="qlp-search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M11 11L14.5 14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search by customer name"
+              value={search}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="qlp-search"
+            />
+          </div>
         </div>
       </div>
 
@@ -179,10 +191,15 @@ export default function QuotesList() {
 
       <style>{`
         .quotes-list-page {
-          min-height: 100vh;
-          min-height: 100dvh;
+          height: 100vh;
+          height: 100dvh;
           background: var(--bg);
-          padding-bottom: 100px;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .qlp-top {
+          flex-shrink: 0;
         }
         .qlp-header {
           background: linear-gradient(160deg, #2c2831 0%, #201d22 100%);
@@ -194,6 +211,25 @@ export default function QuotesList() {
           display: flex;
           align-items: center;
           gap: 12px;
+        }
+        .qlp-header-text {
+          flex: 1;
+          min-width: 0;
+        }
+        .qlp-settings-btn {
+          flex-shrink: 0;
+          width: 38px;
+          height: 38px;
+          border-radius: 10px;
+          border: none;
+          background: rgba(255,255,255,0.1);
+          color: var(--bg);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .qlp-settings-btn:active {
+          background: rgba(255,255,255,0.18);
         }
         .qlp-logo {
           width: 42px;
@@ -245,7 +281,11 @@ export default function QuotesList() {
           box-shadow: 0 4px 16px rgba(89, 96, 115, 0.18), 0 0 0 3px rgba(89, 96, 115, 0.12);
         }
         .qlp-body {
-          padding: 20px 20px 0;
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+          padding: 20px 20px 100px;
         }
         .qlp-state {
           display: flex;
