@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import QuotePdfTemplate from '../components/QuotePdfTemplate'
-import { generateQuotePdfBlob, pdfFileNameFor } from '../utils/pdf'
+import { generateQuotePdfBlob, pdfFileNameFor, buildWhatsAppMessage } from '../utils/pdf'
 
 export default function QuoteView() {
   const { id } = useParams()
@@ -94,9 +94,13 @@ export default function QuoteView() {
       const blob = await ensurePdfBlob()
       const fileName = pdfFileNameFor(quote.customerName)
       const file = new File([blob], fileName, { type: 'application/pdf' })
+      const message = buildWhatsAppMessage(quote)
 
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: fileName })
+        // WhatsApp displays the share's "title" as the editable caption next to the attached
+        // file (confirmed on a real device) - "text" is included too for other apps that read
+        // that field instead. The actual PDF filename is unaffected, it's set on the File itself.
+        await navigator.share({ files: [file], title: message, text: message })
       } else {
         // No file-sharing support (mostly desktop browsers) - download it automatically instead.
         const url = URL.createObjectURL(blob)
