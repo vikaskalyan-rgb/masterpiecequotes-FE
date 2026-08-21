@@ -27,14 +27,16 @@ export default function QuoteCard({ quote, onClick }) {
           background: var(--paper);
           border: 1px solid var(--rule);
           border-left: 4px solid var(--status-color);
-          border-radius: var(--radius-sm);
-          padding: 14px 16px;
-          margin-bottom: 10px;
+          border-radius: 13px;
+          padding: 15px 16px;
+          margin-bottom: 12px;
           cursor: pointer;
+          box-shadow: 0 3px 12px rgba(35, 33, 38, 0.07);
           transition: transform 0.12s ease, box-shadow 0.12s ease;
         }
         .quote-card:active {
           transform: scale(0.98);
+          box-shadow: 0 1px 4px rgba(35, 33, 38, 0.08);
         }
         .quote-card-main {
           flex: 1;
@@ -75,14 +77,16 @@ export default function QuoteCard({ quote, onClick }) {
           display: flex;
           justify-content: space-between;
           align-items: baseline;
-          margin-top: 10px;
+          margin-top: 12px;
+          padding-top: 10px;
+          border-top: 1px dashed var(--rule);
         }
         .quote-card-date {
           font-size: 12px;
           color: var(--ink-soft);
         }
         .quote-card-total {
-          font-size: 15px;
+          font-size: 15.5px;
           font-weight: 600;
           color: var(--ink);
         }
