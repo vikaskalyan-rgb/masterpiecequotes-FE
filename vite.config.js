@@ -9,7 +9,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.png', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Masterpiece Quotes',
+        name: 'Masterpiece Quotations',
         short_name: 'MP Quotes',
         description: 'Quote builder for Masterpiece Interiors',
         theme_color: '#232126',
