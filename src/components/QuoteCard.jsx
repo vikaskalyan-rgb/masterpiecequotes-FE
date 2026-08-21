@@ -1,16 +1,30 @@
-import { STATUS_META, formatRupees, formatDate } from '../utils/format'
+import { formatRupees, formatDate } from '../utils/format'
 
-export default function QuoteCard({ quote, onClick }) {
-  const status = STATUS_META[quote.status] || STATUS_META.DRAFT
-
+export default function QuoteCard({ quote, onClick, onDelete }) {
   return (
-    <button className="quote-card" onClick={onClick} style={{ '--status-color': status.color }}>
+    <button className="quote-card" onClick={onClick}>
       <div className="quote-card-main">
         <div className="quote-card-top">
           <h3 className="quote-card-name">{quote.customerName}</h3>
-          <span className="quote-card-status" style={{ color: status.color, background: status.bg }}>
-            {status.label}
-          </span>
+          <button
+            type="button"
+            className="quote-card-delete"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(quote)
+            }}
+            aria-label="Delete quote"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M3 4.5H13M6.5 4.5V3a1 1 0 011-1h1a1 1 0 011 1v1.5M6 7.5v4M10 7.5v4M4 4.5l.6 8.1a1 1 0 001 .9h4.8a1 1 0 001-.9l.6-8.1"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </div>
         {quote.customerAddress && <p className="quote-card-address">{quote.customerAddress}</p>}
         <div className="quote-card-bottom">
@@ -26,7 +40,7 @@ export default function QuoteCard({ quote, onClick }) {
           text-align: left;
           background: var(--paper);
           border: 1px solid var(--rule);
-          border-left: 4px solid var(--status-color);
+          border-left: 4px solid var(--slate);
           border-radius: 13px;
           padding: 15px 16px;
           margin-bottom: 12px;
@@ -55,15 +69,21 @@ export default function QuoteCard({ quote, onClick }) {
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .quote-card-status {
+        .quote-card-delete {
           flex-shrink: 0;
-          font-family: var(--font-body);
-          font-size: 10.5px;
-          font-weight: 600;
-          letter-spacing: 0.04em;
-          text-transform: uppercase;
-          padding: 3px 9px;
-          border-radius: 100px;
+          width: 30px;
+          height: 30px;
+          border-radius: 8px;
+          border: none;
+          background: transparent;
+          color: var(--ink-soft);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .quote-card-delete:active {
+          background: var(--brick-light);
+          color: var(--brick);
         }
         .quote-card-address {
           font-size: 12.5px;

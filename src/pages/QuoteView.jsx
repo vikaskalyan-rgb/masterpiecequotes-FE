@@ -3,7 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import QuotePdfTemplate from '../components/QuotePdfTemplate'
 import { generateQuotePdfBlob, pdfFileNameFor, buildWhatsAppMessage, normalizePhone } from '../utils/pdf'
-import { STATUS_META } from '../utils/format'
 
 export default function QuoteView() {
   const { id } = useParams()
@@ -120,12 +119,6 @@ export default function QuoteView() {
         URL.revokeObjectURL(url)
         window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank')
       }
-
-      // Reflect real-world workflow: sharing a quote generally means it's been sent.
-      if (quote.status === 'DRAFT') {
-        const updated = await api.updateQuoteStatus(id, 'SENT')
-        setQuote(updated)
-      }
     } catch (err) {
       // AbortError just means the user closed the native share sheet - not a real error.
       if (err.name !== 'AbortError') {
@@ -171,8 +164,6 @@ export default function QuoteView() {
     )
   }
 
-  const status = STATUS_META[quote.status] || STATUS_META.DRAFT
-
   return (
     <div className="qv-page">
       <header className="qv-header">
@@ -181,9 +172,6 @@ export default function QuoteView() {
         </button>
         <div className="qv-header-mid">
           <h1 className="qv-header-title">{quote.customerName}</h1>
-          <span className="qv-header-status" style={{ color: status.color, background: status.bg }}>
-            {status.label}
-          </span>
         </div>
         <button className="qv-header-edit" onClick={() => navigate(`/quotes/${id}/edit`)}>
           Edit
@@ -269,16 +257,6 @@ export default function QuoteView() {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
-        }
-        .qv-header-status {
-          display: inline-block;
-          margin-top: 3px;
-          font-size: 10px;
-          font-weight: 600;
-          letter-spacing: 0.04em;
-          text-transform: uppercase;
-          padding: 2px 8px;
-          border-radius: 100px;
         }
         .qv-header-edit {
           flex-shrink: 0;

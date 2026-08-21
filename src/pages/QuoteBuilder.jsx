@@ -26,7 +26,6 @@ export default function QuoteBuilder() {
   const [customerPhone, setCustomerPhone] = useState('')
   const [customerAddress, setCustomerAddress] = useState('')
   const [quoteDate, setQuoteDate] = useState(todayISO())
-  const [status, setStatus] = useState('DRAFT')
 
   const [rooms, setRooms] = useState([])
   const [expandedRoomKey, setExpandedRoomKey] = useState(null)
@@ -97,7 +96,6 @@ export default function QuoteBuilder() {
           setCustomerPhone(q.customerPhone || '')
           setCustomerAddress(q.customerAddress || '')
           setQuoteDate(q.quoteDate || todayISO())
-          setStatus(q.status || 'DRAFT')
           setRooms(q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()])
           setExpandedRoomKey(null) // review mode: start with everything collapsed for a clean overview
           setAccessoriesDescription(q.accessoriesDescription || '')
@@ -227,7 +225,6 @@ export default function QuoteBuilder() {
       customerPhone: customerPhone.trim(),
       customerAddress: customerAddress.trim(),
       quoteDate,
-      status,
       roundedTotal: parseFloat(roundedTotal) || 0,
       accessoriesDescription: accessoriesDescription.trim(),
       accessoriesAmount: parseFloat(accessoriesAmount) || 0,
@@ -335,25 +332,14 @@ export default function QuoteBuilder() {
             className="qb-input qb-textarea"
             rows={2}
           />
-          <div className="qb-row-2">
-            <div>
-              <label className="qb-label">Quote date</label>
-              <input
-                type="date"
-                value={quoteDate}
-                onChange={(e) => setQuoteDate(e.target.value)}
-                className="qb-input"
-              />
-            </div>
-            <div>
-              <label className="qb-label">Status</label>
-              <select value={status} onChange={(e) => setStatus(e.target.value)} className="qb-input">
-                <option value="DRAFT">Draft</option>
-                <option value="SENT">Sent</option>
-                <option value="ACCEPTED">Accepted</option>
-                <option value="REJECTED">Rejected</option>
-              </select>
-            </div>
+          <div>
+            <label className="qb-label">Quote date</label>
+            <input
+              type="date"
+              value={quoteDate}
+              onChange={(e) => setQuoteDate(e.target.value)}
+              className="qb-input"
+            />
           </div>
         </section>
 
@@ -554,11 +540,6 @@ export default function QuoteBuilder() {
         .qb-textarea {
           resize: vertical;
           font-family: inherit;
-        }
-        .qb-row-2 {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
         }
         .qb-label {
           display: block;

@@ -2,15 +2,8 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import QuoteCard from '../components/QuoteCard'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { formatRupees } from '../utils/format'
-
-const FILTERS = [
-  { key: null, label: 'All', dot: null },
-  { key: 'DRAFT', label: 'Draft', dot: 'var(--ink-soft)' },
-  { key: 'SENT', label: 'Sent', dot: 'var(--slate)' },
-  { key: 'ACCEPTED', label: 'Accepted', dot: 'var(--sage)' },
-  { key: 'REJECTED', label: 'Rejected', dot: 'var(--brick)' },
-]
 
 function EmptyIllustration() {
   return (
@@ -31,28 +24,46 @@ export default function QuotesList() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState(null)
   const debounceRef = useRef(null)
 
-  const fetchQuotes = useCallback((s, status) => {
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState(null)
+
+  const fetchQuotes = useCallback((s) => {
     setLoading(true)
     setError(null)
     api
-      .listQuotes({ search: s, status })
+      .listQuotes({ search: s })
       .then(setQuotes)
       .catch((err) => setError(err.message || 'Could not load quotes'))
       .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
-    fetchQuotes(search, statusFilter)
+    fetchQuotes(search)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter])
+  }, [])
 
   function handleSearchChange(value) {
     setSearch(value)
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => fetchQuotes(value, statusFilter), 350)
+    debounceRef.current = setTimeout(() => fetchQuotes(value), 350)
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api.deleteQuote(deleteTarget.id)
+      setQuotes((prev) => prev.filter((q) => q.id !== deleteTarget.id))
+      setDeleteTarget(null)
+    } catch (err) {
+      setDeleteError(err.message || 'Could not delete this quote')
+    } finally {
+      setDeleting(false)
+    }
   }
 
   const stats = useMemo(() => {
@@ -60,7 +71,7 @@ export default function QuotesList() {
     return { count: quotes.length, total }
   }, [quotes])
 
-  const isFiltering = search.trim().length > 0 || statusFilter !== null
+  const isFiltering = search.trim().length > 0
 
   return (
     <div className="quotes-list-page">
@@ -92,19 +103,6 @@ export default function QuotesList() {
             className="qlp-search"
           />
         </div>
-
-        <div className="qlp-filters">
-          {FILTERS.map((f) => (
-            <button
-              key={f.label}
-              className={`qlp-filter-chip${statusFilter === f.key ? ' active' : ''}`}
-              onClick={() => setStatusFilter(f.key)}
-            >
-              {f.dot && <span className="qlp-filter-dot" style={{ background: f.dot }} />}
-              {f.label}
-            </button>
-          ))}
-        </div>
       </div>
 
       <main className="qlp-body">
@@ -118,7 +116,7 @@ export default function QuotesList() {
         {!loading && error && (
           <div className="qlp-state qlp-error">
             Couldn't reach the server. {error}
-            <button className="qlp-retry" onClick={() => fetchQuotes(search, statusFilter)}>
+            <button className="qlp-retry" onClick={() => fetchQuotes(search)}>
               Try again
             </button>
           </div>
@@ -138,20 +136,46 @@ export default function QuotesList() {
         {!loading && !error && quotes.length === 0 && isFiltering && (
           <div className="qlp-empty">
             <p className="qlp-empty-title">No matches</p>
-            <p className="qlp-empty-sub">Try a different name or clear the filter.</p>
+            <p className="qlp-empty-sub">Try a different name.</p>
           </div>
         )}
 
         {!loading &&
           !error &&
           quotes.map((q) => (
-            <QuoteCard key={q.id} quote={q} onClick={() => navigate(`/quotes/${q.id}`)} />
+            <QuoteCard
+              key={q.id}
+              quote={q}
+              onClick={() => navigate(`/quotes/${q.id}`)}
+              onDelete={(quote) => {
+                setDeleteError(null)
+                setDeleteTarget(quote)
+              }}
+            />
           ))}
       </main>
 
       <button className="qlp-fab" onClick={() => navigate('/quotes/new')} aria-label="New quote">
         +
       </button>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Delete this quote?"
+        message={
+          deleteTarget
+            ? `This will permanently delete the quote for ${deleteTarget.customerName}. This can't be undone.${
+                deleteError ? ` ${deleteError}` : ''
+              }`
+            : ''
+        }
+        confirmLabel="Delete"
+        busy={deleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => {
+          if (!deleting) setDeleteTarget(null)
+        }}
+      />
 
       <style>{`
         .quotes-list-page {
@@ -160,8 +184,6 @@ export default function QuotesList() {
           background: var(--bg);
           padding-bottom: 100px;
         }
-
-        /* ---- Header: dark band for contrast & richness, mirrors the PDF's ink/ivory pairing ---- */
         .qlp-header {
           background: linear-gradient(160deg, #2c2831 0%, #201d22 100%);
           padding: 22px 20px 28px;
@@ -190,8 +212,6 @@ export default function QuotesList() {
           margin-top: 3px;
           letter-spacing: 0.01em;
         }
-
-        /* ---- Search + filters float up over the header/body seam ---- */
         .qlp-controls {
           padding: 0 20px;
           margin-top: -16px;
@@ -224,42 +244,8 @@ export default function QuotesList() {
           border-color: var(--slate);
           box-shadow: 0 4px 16px rgba(89, 96, 115, 0.18), 0 0 0 3px rgba(89, 96, 115, 0.12);
         }
-        .qlp-filters {
-          display: flex;
-          gap: 8px;
-          padding: 12px 0 4px;
-          overflow-x: auto;
-        }
-        .qlp-filter-chip {
-          flex-shrink: 0;
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          border: 1px solid var(--rule);
-          background: var(--paper);
-          color: var(--ink-soft);
-          font-size: 13px;
-          font-weight: 500;
-          padding: 7px 14px;
-          border-radius: 100px;
-          box-shadow: 0 2px 6px rgba(35, 33, 38, 0.06);
-          transition: all 0.12s ease;
-        }
-        .qlp-filter-dot {
-          width: 7px;
-          height: 7px;
-          border-radius: 50%;
-          flex-shrink: 0;
-        }
-        .qlp-filter-chip.active {
-          background: var(--ink);
-          border-color: var(--ink);
-          color: var(--bg);
-          box-shadow: 0 3px 10px rgba(35, 33, 38, 0.28);
-        }
-
         .qlp-body {
-          padding: 16px 20px 0;
+          padding: 20px 20px 0;
         }
         .qlp-state {
           display: flex;
@@ -290,7 +276,6 @@ export default function QuotesList() {
           font-size: 13px;
           font-weight: 600;
         }
-
         .qlp-empty {
           display: flex;
           flex-direction: column;
@@ -325,7 +310,6 @@ export default function QuotesList() {
         .qlp-empty-cta:active {
           transform: scale(0.97);
         }
-
         .qlp-fab {
           position: fixed;
           right: 22px;
