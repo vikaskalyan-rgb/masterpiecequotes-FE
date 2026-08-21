@@ -29,6 +29,7 @@ export default function QuoteBuilder() {
   const [status, setStatus] = useState('DRAFT')
 
   const [rooms, setRooms] = useState([])
+  const [expandedRoomKey, setExpandedRoomKey] = useState(null)
   const [accessoriesDescription, setAccessoriesDescription] = useState('')
   const [accessoriesAmount, setAccessoriesAmount] = useState('')
 
@@ -98,6 +99,7 @@ export default function QuoteBuilder() {
           setQuoteDate(q.quoteDate || todayISO())
           setStatus(q.status || 'DRAFT')
           setRooms(q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()])
+          setExpandedRoomKey(null) // review mode: start with everything collapsed for a clean overview
           setAccessoriesDescription(q.accessoriesDescription || '')
           setAccessoriesAmount(q.accessoriesAmount != null ? String(q.accessoriesAmount) : '')
           setMaterialSpecItems(
@@ -114,7 +116,9 @@ export default function QuoteBuilder() {
           setLoading(false)
         })
     } else {
-      setRooms([emptyRoom()])
+      const firstRoom = emptyRoom()
+      setRooms([firstRoom])
+      setExpandedRoomKey(firstRoom._key)
       api
         .getDefaults()
         .then((d) => {
@@ -155,10 +159,13 @@ export default function QuoteBuilder() {
 
   // ---- room/item handlers ----
   function addRoom() {
-    setRooms([...rooms, emptyRoom()])
+    const room = emptyRoom()
+    setRooms([...rooms, room])
+    setExpandedRoomKey(room._key) // auto-expand the new room, which implicitly collapses the rest
   }
   function removeRoom(key) {
     setRooms(rooms.filter((r) => r._key !== key))
+    setExpandedRoomKey((current) => (current === key ? null : current))
   }
   function changeRoom(key, updated) {
     setRooms(rooms.map((r) => (r._key === key ? updated : r)))
@@ -357,6 +364,10 @@ export default function QuoteBuilder() {
             <RoomBlock
               key={room._key}
               room={room}
+              expanded={expandedRoomKey === room._key}
+              onToggleExpand={() =>
+                setExpandedRoomKey((current) => (current === room._key ? null : room._key))
+              }
               onChange={(updated) => changeRoom(room._key, updated)}
               onRemove={() => removeRoom(room._key)}
               onAddItem={() => addItem(room._key)}

@@ -5,8 +5,10 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
-    <!-- Locked viewport: no pinch-zoom, behaves like a native app -->
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <!-- Locked viewport: no pinch-zoom, behaves like a native app.
+         interactive-widget=resizes-content helps prevent fixed-position elements
+         (like the bottom Save bar) from glitching when the on-screen keyboard opens. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
 
     <meta name="theme-color" content="#232126" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
