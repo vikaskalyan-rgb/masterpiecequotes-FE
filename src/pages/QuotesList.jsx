@@ -79,8 +79,8 @@ export default function QuotesList() {
         <div className="qlp-header-top">
           <img src="/icon-192.png" alt="" className="qlp-logo" />
           <div>
-            <h1 className="qlp-title">Masterpiece </h1>
-            {!loading && !error && quotes.length > 0 &Quotes& (
+            <h1 className="qlp-title">Masterpiece</h1>
+            {!loading && !error && quotes.length > 0 && (
               <p className="qlp-stats mono">
                 {stats.count} quote{stats.count !== 1 ? 's' : ''} · {formatRupees(stats.total)}
               </p>
