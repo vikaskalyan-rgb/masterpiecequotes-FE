@@ -163,7 +163,7 @@ export default function QuotePdfTemplate({ quote }) {
       <div className="pdf-footer">
         <div className="pdf-signoff">
           Thank you for considering Masterpiece Interiors.
-          <strong>N. Kalyan, Founder</strong>
+          <strong>N. Kalyan</strong>
         </div>
         <div className="pdf-footer-contact">
           <span className="pdf-brass-text">Masterpiece Interiors</span>
