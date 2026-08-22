@@ -197,7 +197,7 @@ export default function QuotePdfTemplate({ quote }) {
       <div className="pdf-footer">
         <div className="pdf-signoff">
           Thank you for considering Masterpiece Interiors.
-          <strong>N. Kalyan, Founder</strong>
+          <strong>N. Kalyan</strong>
         </div>
         <div className="pdf-footer-contact">
           <span className="pdf-brass-text">Masterpiece Interiors</span>
@@ -375,7 +375,7 @@ export default function QuotePdfTemplate({ quote }) {
         .pdf-breakdown {
           margin-top: 36px;
           padding: 32px 34px;
-          background: var(--bg);
+          background: var(--paper);
           border: 1px solid var(--rule);
           border-radius: 4px;
         }

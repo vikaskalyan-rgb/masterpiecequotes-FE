@@ -110,7 +110,7 @@ export default function QuotesList() {
       <div className="qlp-top">
         <header className="qlp-header">
           <div className="qlp-header-top">
-            <img src="/icon-192.png" alt="" className="qlp-logo" />
+            <img src="/logos-mark.png" alt="" className="qlp-logo" />
             <div className="qlp-header-text">
               <h1 className="qlp-title">Masterpiece Quotes</h1>
               {!loading && !error && quotes.length > 0 && (
@@ -293,8 +293,8 @@ export default function QuotesList() {
         .qlp-logo {
           width: 54px;
           height: 54px;
-          border-radius: 13px;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+          object-fit: contain;
+         
         }
         .qlp-title {
           font-size: 19px;
