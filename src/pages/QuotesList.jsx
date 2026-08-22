@@ -26,17 +26,10 @@ export default function QuotesList() {
   const [search, setSearch] = useState('')
   const debounceRef = useRef(null)
 
-  // Unified confirm-dialog state - handles both the destructive Delete confirmation and the
-  // non-destructive Duplicate confirmation, so only one dialog can ever be open at a time.
-  const [pendingAction, setPendingAction] = useState(null) // { type: 'delete' | 'duplicate', quote }
+  const [pendingAction, setPendingAction] = useState(null)
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState(null)
 
-  // #root has padding for safe-area insets stacked on top of its 100dvh min-height, which can
-  // make the outer document taller than the viewport on phones with a notch/home-indicator -
-  // that lets the whole page scroll, defeating the fixed-header/scrollable-list layout below.
-  // Locking body scroll here (and restoring it on unmount) fixes that without touching the
-  // other screens, which rely on normal document scrolling.
   useEffect(() => {
     const html = document.documentElement
     const originalHtmlOverflow = html.style.overflow
@@ -92,7 +85,6 @@ export default function QuotesList() {
       return
     }
 
-    // type === 'delete'
     setActionBusy(true)
     setActionError(null)
     try {
@@ -299,9 +291,9 @@ export default function QuotesList() {
           background: rgba(255,255,255,0.18);
         }
         .qlp-logo {
-          width: 42px;
-          height: 42px;
-          border-radius: 11px;
+          width: 54px;
+          height: 54px;
+          border-radius: 13px;
           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
         }
         .qlp-title {
