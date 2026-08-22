@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import QuotesList from './pages/QuotesList'
 import QuoteBuilder from './pages/QuoteBuilder'
 import Settings from './pages/Settings'
+import Analytics from './pages/Analytics'
 
 // QuoteView pulls in jsPDF + html2canvas (~900KB) - code-split so the home screen
 // and builder stay light, and that weight only loads when a quote is actually opened.
@@ -24,6 +25,7 @@ function App() {
         <Route path="/quotes/new" element={<QuoteBuilder />} />
         <Route path="/quotes/:id/edit" element={<QuoteBuilder />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/analytics" element={<Analytics />} />
         <Route
           path="/quotes/:id"
           element={

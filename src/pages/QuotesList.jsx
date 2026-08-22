@@ -127,16 +127,23 @@ export default function QuotesList() {
                 </p>
               )}
             </div>
-            <button className="qlp-settings-btn" onClick={() => navigate('/settings')} aria-label="Settings">
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <line x1="3" y1="6" x2="17" y2="6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                <line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                <line x1="3" y1="14" x2="17" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                <circle cx="7" cy="6" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
-                <circle cx="13" cy="10" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
-                <circle cx="9" cy="14" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
-              </svg>
-            </button>
+            <div className="qlp-header-actions">
+              <button className="qlp-settings-btn" onClick={() => navigate('/analytics')} aria-label="Analytics">
+                <svg width="19" height="19" viewBox="0 0 20 20" fill="none">
+                  <path d="M4 15.5V9.5M10 15.5V4.5M16 15.5V11.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                </svg>
+              </button>
+              <button className="qlp-settings-btn" onClick={() => navigate('/settings')} aria-label="Settings">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <line x1="3" y1="6" x2="17" y2="6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                  <line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                  <line x1="3" y1="14" x2="17" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                  <circle cx="7" cy="6" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
+                  <circle cx="13" cy="10" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
+                  <circle cx="9" cy="14" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
+                </svg>
+              </button>
+            </div>
           </div>
         </header>
 
@@ -270,6 +277,11 @@ export default function QuotesList() {
         .qlp-header-text {
           flex: 1;
           min-width: 0;
+        }
+        .qlp-header-actions {
+          display: flex;
+          gap: 8px;
+          flex-shrink: 0;
         }
         .qlp-settings-btn {
           flex-shrink: 0;
