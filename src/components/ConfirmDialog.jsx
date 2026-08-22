@@ -1,4 +1,14 @@
-export default function ConfirmDialog({ open, title, message, confirmLabel = 'Delete', busy, onConfirm, onCancel }) {
+export default function ConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel = 'Delete',
+  busyLabel = 'Working…',
+  danger = true,
+  busy,
+  onConfirm,
+  onCancel,
+}) {
   if (!open) return null
 
   return (
@@ -10,8 +20,12 @@ export default function ConfirmDialog({ open, title, message, confirmLabel = 'De
           <button className="cd-btn cd-btn-cancel" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button className="cd-btn cd-btn-confirm" onClick={onConfirm} disabled={busy}>
-            {busy ? 'Deleting…' : confirmLabel}
+          <button
+            className={`cd-btn ${danger ? 'cd-btn-confirm' : 'cd-btn-confirm-neutral'}`}
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            {busy ? busyLabel : confirmLabel}
           </button>
         </div>
       </div>
@@ -69,6 +83,10 @@ export default function ConfirmDialog({ open, title, message, confirmLabel = 'De
         .cd-btn-confirm {
           background: var(--brick);
           color: var(--paper);
+        }
+        .cd-btn-confirm-neutral {
+          background: var(--ink);
+          color: var(--bg);
         }
 
         @media (min-width: 480px) {

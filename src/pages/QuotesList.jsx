@@ -26,9 +26,11 @@ export default function QuotesList() {
   const [search, setSearch] = useState('')
   const debounceRef = useRef(null)
 
-  const [deleteTarget, setDeleteTarget] = useState(null)
-  const [deleting, setDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState(null)
+  // Unified confirm-dialog state - handles both the destructive Delete confirmation and the
+  // non-destructive Duplicate confirmation, so only one dialog can ever be open at a time.
+  const [pendingAction, setPendingAction] = useState(null) // { type: 'delete' | 'duplicate', quote }
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionError, setActionError] = useState(null)
 
   const fetchQuotes = useCallback((s) => {
     setLoading(true)
@@ -51,18 +53,39 @@ export default function QuotesList() {
     debounceRef.current = setTimeout(() => fetchQuotes(value), 350)
   }
 
-  async function handleConfirmDelete() {
-    if (!deleteTarget) return
-    setDeleting(true)
-    setDeleteError(null)
+  function askDelete(quote) {
+    setActionError(null)
+    setPendingAction({ type: 'delete', quote })
+  }
+
+  function askDuplicate(quote) {
+    setActionError(null)
+    setPendingAction({ type: 'duplicate', quote })
+  }
+
+  function goEdit(quote) {
+    navigate(`/quotes/${quote.id}/edit`)
+  }
+
+  async function handleConfirm() {
+    if (!pendingAction) return
+
+    if (pendingAction.type === 'duplicate') {
+      navigate(`/quotes/new?from=${pendingAction.quote.id}`)
+      return
+    }
+
+    // type === 'delete'
+    setActionBusy(true)
+    setActionError(null)
     try {
-      await api.deleteQuote(deleteTarget.id)
-      setQuotes((prev) => prev.filter((q) => q.id !== deleteTarget.id))
-      setDeleteTarget(null)
+      await api.deleteQuote(pendingAction.quote.id)
+      setQuotes((prev) => prev.filter((q) => q.id !== pendingAction.quote.id))
+      setPendingAction(null)
     } catch (err) {
-      setDeleteError(err.message || 'Could not delete this quote')
+      setActionError(err.message || 'Could not delete this quote')
     } finally {
-      setDeleting(false)
+      setActionBusy(false)
     }
   }
 
@@ -159,10 +182,9 @@ export default function QuotesList() {
               key={q.id}
               quote={q}
               onClick={() => navigate(`/quotes/${q.id}`)}
-              onDelete={(quote) => {
-                setDeleteError(null)
-                setDeleteTarget(quote)
-              }}
+              onDuplicate={askDuplicate}
+              onEdit={goEdit}
+              onDelete={askDelete}
             />
           ))}
       </main>
@@ -171,23 +193,39 @@ export default function QuotesList() {
         +
       </button>
 
-      <ConfirmDialog
-        open={Boolean(deleteTarget)}
-        title="Delete this quote?"
-        message={
-          deleteTarget
-            ? `This will permanently delete the quote for ${deleteTarget.customerName}. This can't be undone.${
-                deleteError ? ` ${deleteError}` : ''
-              }`
-            : ''
-        }
-        confirmLabel="Delete"
-        busy={deleting}
-        onConfirm={handleConfirmDelete}
-        onCancel={() => {
-          if (!deleting) setDeleteTarget(null)
-        }}
-      />
+      {pendingAction && pendingAction.type === 'delete' && (
+        <ConfirmDialog
+          open
+          title="Delete this quote?"
+          message={`This will permanently delete the quote for ${pendingAction.quote.customerName}. This can't be undone.${
+            actionError ? ` ${actionError}` : ''
+          }`}
+          confirmLabel="Delete"
+          busyLabel="Deleting…"
+          danger
+          busy={actionBusy}
+          onConfirm={handleConfirm}
+          onCancel={() => {
+            if (!actionBusy) setPendingAction(null)
+          }}
+        />
+      )}
+
+      {pendingAction && pendingAction.type === 'duplicate' && (
+        <ConfirmDialog
+          open
+          title="Duplicate this quote?"
+          message={`This will create a new quote using ${pendingAction.quote.customerName}'s rooms, items, and rates - you'll enter the new customer's details next.`}
+          confirmLabel="Duplicate"
+          busyLabel="Opening…"
+          danger={false}
+          busy={actionBusy}
+          onConfirm={handleConfirm}
+          onCancel={() => {
+            if (!actionBusy) setPendingAction(null)
+          }}
+        />
+      )}
 
       <style>{`
         .quotes-list-page {
