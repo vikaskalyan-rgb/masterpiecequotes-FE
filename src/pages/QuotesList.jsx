@@ -32,6 +32,23 @@ export default function QuotesList() {
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState(null)
 
+  // #root has padding for safe-area insets stacked on top of its 100dvh min-height, which can
+  // make the outer document taller than the viewport on phones with a notch/home-indicator -
+  // that lets the whole page scroll, defeating the fixed-header/scrollable-list layout below.
+  // Locking body scroll here (and restoring it on unmount) fixes that without touching the
+  // other screens, which rely on normal document scrolling.
+  useEffect(() => {
+    const html = document.documentElement
+    const originalHtmlOverflow = html.style.overflow
+    const originalBodyOverflow = document.body.style.overflow
+    html.style.overflow = 'hidden'
+    document.body.style.overflow = 'hidden'
+    return () => {
+      html.style.overflow = originalHtmlOverflow
+      document.body.style.overflow = originalBodyOverflow
+    }
+  }, [])
+
   const fetchQuotes = useCallback((s) => {
     setLoading(true)
     setError(null)
