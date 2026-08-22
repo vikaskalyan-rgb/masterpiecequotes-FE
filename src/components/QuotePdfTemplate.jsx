@@ -35,7 +35,7 @@ export default function QuotePdfTemplate({ quote }) {
     <div className="pdf-page">
       <div className="pdf-letterhead">
         <div className="pdf-brand-group">
-          <img src="/icon-512.png" alt="" className="pdf-logo" />
+          <img src="/logo-mark.png" alt="" className="pdf-logo" />
           <div>
             <p className="pdf-brand-name">Masterpiece Interiors</p>
             <p className="pdf-brand-tagline">Inspired Interiors, Perfected</p>
@@ -67,7 +67,7 @@ export default function QuotePdfTemplate({ quote }) {
         const filledItems = room.items.filter((it) => it.description)
         if (filledItems.length === 0) return null
         return (
-          <div className="pdf-room" key={room.id ?? room.name}>
+          <div className="pdf-room" data-pdf-block="true" key={room.id ?? room.name}>
             <div className="pdf-room-title">
               <h3>{room.name}</h3>
               <div className="pdf-room-line" />
@@ -99,13 +99,13 @@ export default function QuotePdfTemplate({ quote }) {
       })}
 
       {accessoriesAmount > 0 && (
-        <div className="pdf-accessories-row">
+        <div className="pdf-accessories-row" data-pdf-block="true">
           <span>{quote.accessoriesDescription || 'Fittings & Accessories'}</span>
           <span className="mono">{accessoriesAmount.toLocaleString('en-IN')}</span>
         </div>
       )}
 
-      <div className="pdf-totals">
+      <div className="pdf-totals" data-pdf-block="true">
         <div className="pdf-totals-row">
           <span>Subtotal</span>
           <span className="mono">{formatRupees(quote.subtotal)}</span>
@@ -117,7 +117,7 @@ export default function QuotePdfTemplate({ quote }) {
       </div>
 
       {breakdownSegments.length > 1 && (
-        <div className="pdf-breakdown">
+        <div className="pdf-breakdown" data-pdf-block="true">
           <div className="pdf-breakdown-heading">
             <div className="pdf-breakdown-label">Where Your Investment Goes</div>
             <div className="pdf-breakdown-line" />
@@ -167,7 +167,7 @@ export default function QuotePdfTemplate({ quote }) {
       )}
 
       {quote.materialSpecItems && quote.materialSpecItems.length > 0 && (
-        <>
+        <div data-pdf-block="true">
           <div className="pdf-section-heading">Material Specification</div>
           <table className="pdf-spec">
             <tbody>
@@ -180,18 +180,18 @@ export default function QuotePdfTemplate({ quote }) {
               ))}
             </tbody>
           </table>
-        </>
+        </div>
       )}
 
       {quote.termItems && quote.termItems.length > 0 && (
-        <>
+        <div data-pdf-block="true">
           <div className="pdf-section-heading">Terms &amp; Conditions</div>
           <ul className="pdf-terms">
             {quote.termItems.map((t, i) => (
               <li key={t.id ?? i}>{t.text}</li>
             ))}
           </ul>
-        </>
+        </div>
       )}
 
       <div className="pdf-footer">
@@ -229,9 +229,9 @@ export default function QuotePdfTemplate({ quote }) {
           gap: 14px;
         }
         .pdf-logo {
-          height: 62px;
-          width: 62px;
-          border-radius: 10px;
+          height: 82px;
+          width: 82px;
+          object-fit: contain;
         }
         .pdf-brand-name {
           font-family: var(--font-display);
