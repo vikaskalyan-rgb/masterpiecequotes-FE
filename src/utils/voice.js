@@ -53,9 +53,25 @@ export function clearActiveRecognition(recognition) {
 // Parses spoken dimension phrases like "24 by 54", "7 x 3", "7 into 3.5" into { length, width }.
 // Returns null if it can't find two numbers - the caller should show a gentle retry hint rather
 // than silently filling in something wrong.
+//
+// Before matching, the transcript is normalized to absorb real-world speech-to-text quirks
+// discovered from actual failed dimension inputs (e.g. "7 by 2.8" not filling anything):
+//   - "by" is frequently mis-transcribed as "buy" (homophone)
+//   - decimals are sometimes transcribed as spoken words ("2 point 8") instead of digits ("2.8"),
+//     even though whole numbers reliably come through as digits - this is why the bug only
+//     showed up on decimal measurements, not clean whole-number ones
+//   - "cross" is a common Indian-English way of saying dimensions ("7 cross 3")
 export function parseDimensions(text) {
-  const match = text.match(/(\d+(?:\.\d+)?)\s*(?:by|x|into|×|\*)\s*(\d+(?:\.\d+)?)/i)
-  if (!match) return null
+  const normalized = text
+    .toLowerCase()
+    .replace(/(\d+)\s*point\s*(\d+)/g, '$1.$2')
+    .replace(/\bbuy\b/g, 'by')
+
+  const match = normalized.match(/(\d+(?:\.\d+)?)\s*(?:by|x|into|cross|×|\*)\s*(\d+(?:\.\d+)?)/i)
+  if (!match) {
+    console.error('parseDimensions: no match for transcript ->', text)
+    return null
+  }
   return { length: match[1], width: match[2] }
 }
 
