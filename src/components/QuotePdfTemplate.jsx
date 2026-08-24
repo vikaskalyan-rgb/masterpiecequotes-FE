@@ -1,4 +1,4 @@
-import { formatRupees, formatDate } from '../utils/format'
+import { formatRupees, formatDate, amountInWords } from '../utils/format'
 
 const BREAKDOWN_COLORS = ['#BE504F', '#596073', '#DA9F7F', '#232126', '#AEB4C0', '#F1DAD3']
 
@@ -114,6 +114,7 @@ export default function QuotePdfTemplate({ quote }) {
           <span>Total (Rounded Off)</span>
           <span className="mono">{formatRupees(quote.roundedTotal)}</span>
         </div>
+        <div className="pdf-totals-words">{amountInWords(quote.roundedTotal)}</div>
       </div>
 
       {breakdownSegments.length > 1 && (
@@ -371,6 +372,14 @@ export default function QuotePdfTemplate({ quote }) {
           color: var(--slate);
           font-size: 18px;
           font-weight: 600;
+        }
+        .pdf-totals-words {
+          text-align: right;
+          font-style: italic;
+          font-size: 11px;
+          color: var(--ink-soft);
+          margin-top: 2px;
+          padding: 0 4px;
         }
         .pdf-breakdown {
           margin-top: 36px;

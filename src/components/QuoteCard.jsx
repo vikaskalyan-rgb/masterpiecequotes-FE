@@ -1,12 +1,38 @@
-import { formatRupees, formatDate } from '../utils/format'
+import { formatRupees, formatDate, formatRelativeTime } from '../utils/format'
 
-export default function QuoteCard({ quote, onClick, onDuplicate, onEdit, onDelete }) {
+export default function QuoteCard({ quote, onClick, onDuplicate, onEdit, onDelete, onShare, sharing }) {
   return (
     <button className="quote-card" onClick={onClick}>
       <div className="quote-card-main">
         <div className="quote-card-top">
           <h3 className="quote-card-name">{quote.customerName}</h3>
           <div className="quote-card-icon-row">
+            <button
+              type="button"
+              className="quote-card-icon-btn quote-card-icon-btn-share"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (!sharing) onShare(quote)
+              }}
+              disabled={sharing}
+              aria-label="Share on WhatsApp"
+            >
+              {sharing ? (
+                <span className="quote-card-share-spinner" />
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M8 2.5a5.4 5.4 0 00-4.6 8.2L2.5 13.5l2.9-.9A5.4 5.4 0 108 2.5z"
+                    stroke="currentColor"
+                    strokeWidth="1.3"
+                  />
+                  <path
+                    d="M5.8 5.6c.1-.3.4-.3.6-.3.2 0 .3 0 .5.4.1.3.4 1 .5 1.1.1.1.1.3 0 .4-.1.2-.2.3-.3.4-.1.1-.3.3-.1.6.2.3.7 1.1 1.5 1.5.5.3.7.2.9.1.1-.1.5-.6.6-.8.1-.2.3-.2.5-.1.2.1 1 .5 1.2.6.2.1.3.1.3.3 0 .2 0 .8-.3 1.1-.3.3-.9.6-1.5.6-.5 0-1.8-.3-3-1.4-1.2-1.1-1.5-2.1-1.6-2.4-.1-.3-.5-1 .2-1.9z"
+                    fill="currentColor"
+                  />
+                </svg>
+              )}
+            </button>
             <button
               type="button"
               className="quote-card-icon-btn"
@@ -67,7 +93,10 @@ export default function QuoteCard({ quote, onClick, onDuplicate, onEdit, onDelet
         </div>
         {quote.customerAddress && <p className="quote-card-address">{quote.customerAddress}</p>}
         <div className="quote-card-bottom">
-          <span className="quote-card-date">{formatDate(quote.quoteDate)}</span>
+          <span className="quote-card-date">
+            {formatDate(quote.quoteDate)}
+            {quote.updatedAt && <span className="quote-card-relative"> · {formatRelativeTime(quote.updatedAt)}</span>}
+          </span>
           <span className="quote-card-total mono">{formatRupees(quote.roundedTotal)}</span>
         </div>
       </div>
@@ -133,6 +162,29 @@ export default function QuoteCard({ quote, onClick, onDuplicate, onEdit, onDelet
         .quote-card-icon-btn-danger:active {
           background: var(--brick-light);
           color: var(--brick);
+        }
+        .quote-card-icon-btn-share {
+          color: var(--sage);
+        }
+        .quote-card-icon-btn-share:active:not(:disabled) {
+          background: var(--sage-light);
+        }
+        .quote-card-icon-btn-share:disabled {
+          opacity: 0.6;
+        }
+        .quote-card-share-spinner {
+          width: 12px;
+          height: 12px;
+          border: 1.8px solid var(--sage-light);
+          border-top-color: var(--sage);
+          border-radius: 50%;
+          animation: quote-card-spin 0.7s linear infinite;
+        }
+        @keyframes quote-card-spin {
+          to { transform: rotate(360deg); }
+        }
+        .quote-card-relative {
+          color: var(--ink-soft);
         }
         .quote-card-address {
           font-size: 12.5px;

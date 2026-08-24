@@ -5,6 +5,8 @@ import QuoteCard from '../components/QuoteCard'
 import ConfirmDialog from '../components/ConfirmDialog'
 import VoiceButton from '../components/VoiceButton'
 import { formatRupees } from '../utils/format'
+import QuotePdfTemplate from '../components/QuotePdfTemplate'
+import { generateQuotePdfBlob, pdfFileNameFor, buildWhatsAppMessage } from '../utils/pdf'
 
 function EmptyIllustration() {
   return (
@@ -21,17 +23,26 @@ function EmptyIllustration() {
 
 export default function QuotesList() {
   const navigate = useNavigate()
-  const [quotes, setQuotes] = useState([])
+  const [allQuotes, setAllQuotes] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
-  const debounceRef = useRef(null)
 
   // Unified confirm-dialog state - handles both the destructive Delete confirmation and the
   // non-destructive Duplicate confirmation, so only one dialog can ever be open at a time.
   const [pendingAction, setPendingAction] = useState(null) // { type: 'delete' | 'duplicate', quote }
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState(null)
+
+  // ---- quick share from the home screen card ----
+  // Sharing needs the full quote (rooms/items/etc.) to render a real PDF, but the card only has
+  // the lightweight QuoteSummaryDto - so this fetches the full quote on demand, mounts it
+  // off-screen in QuotePdfTemplate for html2canvas to capture, then opens the same native share
+  // sheet flow QuoteView uses. shareQuote holds the full quote currently being captured/shared.
+  const [sharingId, setSharingId] = useState(null)
+  const [shareQuote, setShareQuote] = useState(null)
+  const [shareError, setShareError] = useState(null)
+  const shareCaptureRef = useRef(null)
 
   // #root has padding for safe-area insets stacked on top of its 100dvh min-height, which can
   // make the outer document taller than the viewport on phones with a notch/home-indicator -
@@ -50,26 +61,36 @@ export default function QuotesList() {
     }
   }, [])
 
-  const fetchQuotes = useCallback((s) => {
+  const fetchQuotes = useCallback(() => {
     setLoading(true)
     setError(null)
     api
-      .listQuotes({ search: s })
-      .then(setQuotes)
+      .listQuotes({})
+      .then(setAllQuotes)
       .catch((err) => setError(err.message || 'Could not load quotes'))
       .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
-    fetchQuotes(search)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    fetchQuotes()
+  }, [fetchQuotes])
 
   function handleSearchChange(value) {
     setSearch(value)
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => fetchQuotes(value), 350)
   }
+
+  // Matches against customer name or phone number - phone comparison strips non-digits from
+  // both sides so "9994" or formatted numbers with spaces/dashes still find a match.
+  const quotes = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return allQuotes
+    const digitsQuery = q.replace(/\D/g, '')
+    return allQuotes.filter((quote) => {
+      const nameMatch = (quote.customerName || '').toLowerCase().includes(q)
+      const phoneMatch = digitsQuery.length > 0 && (quote.customerPhone || '').replace(/\D/g, '').includes(digitsQuery)
+      return nameMatch || phoneMatch
+    })
+  }, [allQuotes, search])
 
   function askDelete(quote) {
     setActionError(null)
@@ -98,7 +119,7 @@ export default function QuotesList() {
     setActionError(null)
     try {
       await api.deleteQuote(pendingAction.quote.id)
-      setQuotes((prev) => prev.filter((q) => q.id !== pendingAction.quote.id))
+      setAllQuotes((prev) => prev.filter((q) => q.id !== pendingAction.quote.id))
       setPendingAction(null)
     } catch (err) {
       setActionError(err.message || 'Could not delete this quote')
@@ -106,6 +127,60 @@ export default function QuotesList() {
       setActionBusy(false)
     }
   }
+
+  async function handleQuickShare(summary) {
+    setShareError(null)
+    setSharingId(summary.id)
+    try {
+      const full = await api.getQuote(summary.id)
+      setShareQuote(full) // mounts off-screen below; the effect picks it up once it's rendered
+    } catch (err) {
+      setShareError(err.message || 'Could not load this quote to share')
+      setSharingId(null)
+    }
+  }
+
+  // Once shareQuote is set, QuotePdfTemplate renders off-screen (see the hidden div below) -
+  // this effect then captures it exactly like QuoteView.handleShareWhatsApp does, so resending
+  // an existing quote from the home screen behaves identically to sharing from the full view.
+  useEffect(() => {
+    if (!shareQuote || !shareCaptureRef.current) return
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const blob = await generateQuotePdfBlob(shareCaptureRef.current)
+        if (cancelled) return
+        const fileName = pdfFileNameFor(shareQuote.customerName)
+        const file = new File([blob], fileName, { type: 'application/pdf' })
+        const message = buildWhatsAppMessage(shareQuote)
+
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: message, text: message })
+        } else {
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = fileName
+          a.click()
+          URL.revokeObjectURL(url)
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          setShareError(err.message || 'Could not prepare the PDF to share')
+        }
+      } finally {
+        if (!cancelled) {
+          setSharingId(null)
+          setShareQuote(null)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [shareQuote])
 
   const stats = useMemo(() => {
     const total = quotes.reduce((sum, q) => sum + Number(q.roundedTotal || 0), 0)
@@ -156,7 +231,7 @@ export default function QuotesList() {
             </svg>
             <input
               type="text"
-              placeholder="Search by customer name"
+              placeholder="Search by name or phone"
               value={search}
               onChange={(e) => handleSearchChange(e.target.value)}
               className="qlp-search"
@@ -179,7 +254,7 @@ export default function QuotesList() {
         {!loading && error && (
           <div className="qlp-state qlp-error">
             Couldn't reach the server. {error}
-            <button className="qlp-retry" onClick={() => fetchQuotes(search)}>
+            <button className="qlp-retry" onClick={() => fetchQuotes()}>
               Try again
             </button>
           </div>
@@ -213,13 +288,27 @@ export default function QuotesList() {
               onDuplicate={askDuplicate}
               onEdit={goEdit}
               onDelete={askDelete}
+              onShare={handleQuickShare}
+              sharing={sharingId === q.id}
             />
           ))}
+        {shareError && <p className="qlp-share-error">{shareError}</p>}
       </main>
 
       <button className="qlp-fab" onClick={() => navigate('/quotes/new')} aria-label="New quote">
         +
       </button>
+
+      {/* Hidden off-screen render used only to capture a PDF for quick-share - mirrors the
+          same pattern QuoteView uses for its own capture ref. Only mounted while a share is
+          actually in progress, so it doesn't cost anything the rest of the time. */}
+      {shareQuote && (
+        <div style={{ position: 'absolute', left: '-9999px', top: 0 }}>
+          <div ref={shareCaptureRef}>
+            <QuotePdfTemplate quote={shareQuote} />
+          </div>
+        </div>
+      )}
 
       {pendingAction && pendingAction.type === 'delete' && (
         <ConfirmDialog
@@ -384,6 +473,12 @@ export default function QuotesList() {
         }
         @keyframes qlp-spin {
           to { transform: rotate(360deg); }
+        }
+        .qlp-share-error {
+          color: var(--brick);
+          font-size: 12.5px;
+          text-align: center;
+          padding: 10px 0 0;
         }
         .qlp-retry {
           border: 1px solid var(--ink);
