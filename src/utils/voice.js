@@ -61,13 +61,16 @@ export function clearActiveRecognition(recognition) {
 //     even though whole numbers reliably come through as digits - this is why the bug only
 //     showed up on decimal measurements, not clean whole-number ones
 //   - "cross" is a common Indian-English way of saying dimensions ("7 cross 3")
+//   - confirmed via console logging in real use: the speech engine sometimes renders a spoken
+//     "by" as a literal "/" character instead of transcribing it as text at all (e.g. "7 by 2.5"
+//     comes back as "7 / 2.5") - this isn't a homophone mis-hearing, it's symbolic notation
 export function parseDimensions(text) {
   const normalized = text
     .toLowerCase()
     .replace(/(\d+)\s*point\s*(\d+)/g, '$1.$2')
     .replace(/\bbuy\b/g, 'by')
 
-  const match = normalized.match(/(\d+(?:\.\d+)?)\s*(?:by|x|into|cross|×|\*)\s*(\d+(?:\.\d+)?)/i)
+  const match = normalized.match(/(\d+(?:\.\d+)?)\s*(?:by|x|into|cross|\/|×|\*)\s*(\d+(?:\.\d+)?)/i)
   if (!match) {
     console.error('parseDimensions: no match for transcript ->', text)
     return null
