@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { isVoiceSupported, createRecognizer } from '../utils/voice'
+import { isVoiceSupported, createRecognizer, clearActiveRecognition } from '../utils/voice'
 
 export default function VoiceButton({ onResult, label = 'Voice input' }) {
   const [listening, setListening] = useState(false)
@@ -10,21 +10,44 @@ export default function VoiceButton({ onResult, label = 'Voice input' }) {
   function handleClick() {
     if (listening) return
     setError(null)
+
+    // createRecognizer() force-stops any other mic session that might still be tearing down,
+    // so overlapping taps across different fields can't collide.
     const recognition = createRecognizer()
     if (!recognition) return
 
     recognition.onstart = () => setListening(true)
     recognition.onerror = (e) => {
+      // Log the real error code (e.g. 'no-speech', 'network', 'aborted', 'audio-capture') so
+      // if a *new* failure mode shows up later we're not debugging blind from a generic
+      // on-screen message again.
+      console.error('SpeechRecognition error:', e.error)
       setListening(false)
+      clearActiveRecognition(recognition)
       setError(e.error === 'no-speech' ? "Didn't catch that" : 'Voice input failed')
       setTimeout(() => setError(null), 2500)
     }
-    recognition.onend = () => setListening(false)
+    recognition.onend = () => {
+      setListening(false)
+      clearActiveRecognition(recognition)
+    }
     recognition.onresult = (e) => {
       const transcript = e.results[0][0].transcript
       onResult(transcript)
     }
-    recognition.start()
+
+    try {
+      recognition.start()
+    } catch (err) {
+      // Synchronous InvalidStateError can be thrown if the browser hasn't fully released the
+      // previous audio session yet, even after stopActiveRecognition(). Treat it the same as
+      // any other failure rather than letting it go uncaught.
+      console.error('SpeechRecognition start() threw:', err)
+      clearActiveRecognition(recognition)
+      setListening(false)
+      setError('Voice input failed')
+      setTimeout(() => setError(null), 2500)
+    }
   }
 
   return (

@@ -6,15 +6,48 @@ export function isVoiceSupported() {
   return typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
 }
 
+// Android (and most browsers) only allow ONE SpeechRecognition session to be active at a time,
+// system-wide. Screens like the room builder have many VoiceButtons mounted simultaneously
+// (name, description, dimensions, rate, etc.) - if a user taps a second mic before the first
+// one's session has fully torn down (there's real latency between audio stopping and `onend`
+// firing), starting the new one throws immediately. This singleton guard makes sure any prior
+// session is force-stopped before a new one starts, so overlapping taps can never collide.
+let activeRecognition = null
+
+export function stopActiveRecognition() {
+  if (activeRecognition) {
+    try {
+      activeRecognition.abort()
+    } catch (_) {
+      // already stopped/stopping - safe to ignore
+    }
+    activeRecognition = null
+  }
+}
+
 export function createRecognizer() {
   const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition
   if (!SpeechRecognitionImpl) return null
+
+  // Always clear out any previous session before handing back a new one.
+  stopActiveRecognition()
+
   const recognition = new SpeechRecognitionImpl()
   recognition.lang = 'en-IN'
   recognition.continuous = false
   recognition.interimResults = false
   recognition.maxAlternatives = 1
+
+  activeRecognition = recognition
   return recognition
+}
+
+// Called by VoiceButton once a session ends (successfully or via error) so the singleton
+// doesn't keep pointing at a dead recognition object.
+export function clearActiveRecognition(recognition) {
+  if (activeRecognition === recognition) {
+    activeRecognition = null
+  }
 }
 
 // Parses spoken dimension phrases like "24 by 54", "7 x 3", "7 into 3.5" into { length, width }.
