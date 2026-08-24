@@ -1,547 +1,900 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
-import QuoteCard from '../components/QuoteCard'
-import ConfirmDialog from '../components/ConfirmDialog'
+import RoomBlock from '../components/RoomBlock'
 import VoiceButton from '../components/VoiceButton'
-import { formatRupees } from '../utils/format'
-import QuotePdfTemplate from '../components/QuotePdfTemplate'
-import { generateQuotePdfBlob, pdfFileNameFor, buildWhatsAppMessage } from '../utils/pdf'
+import { parseDescription, buildDescription } from '../components/ItemRow'
+import { formatRupees, formatRelativeTime } from '../utils/format'
+import { draftKeyFor, saveDraft, loadDraft, clearDraft } from '../utils/draftStorage'
 
-function EmptyIllustration() {
-  return (
-    <svg width="120" height="94" viewBox="0 0 120 94" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M60 6L110 46H10L60 6Z" stroke="var(--rule)" strokeWidth="2.5" strokeLinejoin="round" />
-      <rect x="24" y="46" width="34" height="42" stroke="var(--brick)" strokeOpacity="0.55" strokeWidth="2.5" />
-      <rect x="62" y="46" width="34" height="42" stroke="var(--slate)" strokeOpacity="0.55" strokeWidth="2.5" />
-      <line x1="24" y1="67" x2="58" y2="67" stroke="var(--rule)" strokeWidth="2" />
-      <line x1="62" y1="67" x2="96" y2="67" stroke="var(--rule)" strokeWidth="2" />
-      <circle cx="41" cy="57" r="3.5" stroke="var(--terracotta)" strokeWidth="2" />
-    </svg>
-  )
+function todayISO() {
+  return new Date().toISOString().slice(0, 10)
 }
 
-export default function QuotesList() {
+export default function QuoteBuilder() {
+  const { id } = useParams()
+  const [searchParams] = useSearchParams()
+  const duplicateFromId = searchParams.get('from')
   const navigate = useNavigate()
-  const [allQuotes, setAllQuotes] = useState([])
+  const isEdit = Boolean(id)
+  const draftKey = draftKeyFor({ isEdit, id, duplicateFromId })
+  const keyCounter = useRef(0)
+  const nextKey = () => `k${keyCounter.current++}`
+
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [search, setSearch] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [loadError, setLoadError] = useState(null)
+  const [saveError, setSaveError] = useState(null)
+  const [validationError, setValidationError] = useState(null)
 
-  // Unified confirm-dialog state - handles both the destructive Delete confirmation and the
-  // non-destructive Duplicate confirmation, so only one dialog can ever be open at a time.
-  const [pendingAction, setPendingAction] = useState(null) // { type: 'delete' | 'duplicate', quote }
-  const [actionBusy, setActionBusy] = useState(false)
-  const [actionError, setActionError] = useState(null)
+  // Set once a local draft is found and restored on load - shown as a dismissible banner so
+  // Kalyan knows unsaved changes were brought back, and can discard them if they're stale.
+  const [restoredDraftAt, setRestoredDraftAt] = useState(null)
+  // Holds the "clean" state (server data for edit/duplicate, or nothing for new) so Discard
+  // can revert to it instead of just clearing the form.
+  const cleanSnapshotRef = useRef(null)
 
-  // ---- quick share from the home screen card ----
-  // Sharing needs the full quote (rooms/items/etc.) to render a real PDF, but the card only has
-  // the lightweight QuoteSummaryDto - so this fetches the full quote on demand, mounts it
-  // off-screen in QuotePdfTemplate for html2canvas to capture, then opens the same native share
-  // sheet flow QuoteView uses. shareQuote holds the full quote currently being captured/shared.
-  const [sharingId, setSharingId] = useState(null)
-  const [shareQuote, setShareQuote] = useState(null)
-  const [shareError, setShareError] = useState(null)
-  const shareCaptureRef = useRef(null)
+  const [customerName, setCustomerName] = useState('')
+  const [customerPhone, setCustomerPhone] = useState('')
+  const [customerAddress, setCustomerAddress] = useState('')
+  const [quoteDate, setQuoteDate] = useState(todayISO())
 
-  // #root has padding for safe-area insets stacked on top of its 100dvh min-height, which can
-  // make the outer document taller than the viewport on phones with a notch/home-indicator -
-  // that lets the whole page scroll, defeating the fixed-header/scrollable-list layout below.
-  // Locking body scroll here (and restoring it on unmount) fixes that without touching the
-  // other screens, which rely on normal document scrolling.
-  useEffect(() => {
-    const html = document.documentElement
-    const originalHtmlOverflow = html.style.overflow
-    const originalBodyOverflow = document.body.style.overflow
-    html.style.overflow = 'hidden'
-    document.body.style.overflow = 'hidden'
-    return () => {
-      html.style.overflow = originalHtmlOverflow
-      document.body.style.overflow = originalBodyOverflow
-    }
-  }, [])
+  const [rooms, setRooms] = useState([])
+  const [expandedRoomKey, setExpandedRoomKey] = useState(null)
+  const [accessoriesDescription, setAccessoriesDescription] = useState('')
+  const [accessoriesAmount, setAccessoriesAmount] = useState('')
 
-  const fetchQuotes = useCallback(() => {
-    setLoading(true)
-    setError(null)
-    api
-      .listQuotes({})
-      .then(setAllQuotes)
-      .catch((err) => setError(err.message || 'Could not load quotes'))
-      .finally(() => setLoading(false))
-  }, [])
+  const [materialSpecItems, setMaterialSpecItems] = useState([])
+  const [termItems, setTermItems] = useState([])
 
-  useEffect(() => {
-    fetchQuotes()
-  }, [fetchQuotes])
+  const [roundedTotal, setRoundedTotal] = useState('')
+  const [roundedTotalTouched, setRoundedTotalTouched] = useState(false)
 
-  function handleSearchChange(value) {
-    setSearch(value)
+  // ---- mapping helpers ----
+  function emptyItem() {
+    return { _key: nextKey(), id: null, base: '', length: '', width: '', unit: 'SQFT', quantity: 0, rate: '' }
+  }
+  function emptyRoom() {
+    return { _key: nextKey(), id: null, name: '', items: [emptyItem()] }
+  }
+  function emptySpec() {
+    return { _key: nextKey(), id: null, itemLabel: '', detail: '', brand: '' }
+  }
+  function emptyTerm() {
+    return { _key: nextKey(), id: null, text: '' }
   }
 
-  // Matches against customer name or phone number - phone comparison strips non-digits from
-  // both sides so "9994" or formatted numbers with spaces/dashes still find a match.
-  const quotes = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return allQuotes
-    const digitsQuery = q.replace(/\D/g, '')
-    return allQuotes.filter((quote) => {
-      const nameMatch = (quote.customerName || '').toLowerCase().includes(q)
-      const phoneMatch = digitsQuery.length > 0 && (quote.customerPhone || '').replace(/\D/g, '').includes(digitsQuery)
-      return nameMatch || phoneMatch
-    })
-  }, [allQuotes, search])
-
-  function askDelete(quote) {
-    setActionError(null)
-    setPendingAction({ type: 'delete', quote })
-  }
-
-  function askDuplicate(quote) {
-    setActionError(null)
-    setPendingAction({ type: 'duplicate', quote })
-  }
-
-  function goEdit(quote) {
-    navigate(`/quotes/${quote.id}/edit`)
-  }
-
-  async function handleConfirm() {
-    if (!pendingAction) return
-
-    if (pendingAction.type === 'duplicate') {
-      navigate(`/quotes/new?from=${pendingAction.quote.id}`)
-      return
-    }
-
-    // type === 'delete'
-    setActionBusy(true)
-    setActionError(null)
-    try {
-      await api.deleteQuote(pendingAction.quote.id)
-      setAllQuotes((prev) => prev.filter((q) => q.id !== pendingAction.quote.id))
-      setPendingAction(null)
-    } catch (err) {
-      setActionError(err.message || 'Could not delete this quote')
-    } finally {
-      setActionBusy(false)
+  function mapItemFromApi(dto) {
+    const parsed = parseDescription(dto.description)
+    return {
+      _key: nextKey(),
+      id: dto.id,
+      base: parsed.base,
+      length: dto.length != null ? String(dto.length) : '',
+      width: dto.width != null ? String(dto.width) : '',
+      unit: dto.unit,
+      quantity: dto.quantity != null ? String(dto.quantity) : '0',
+      rate: dto.rate != null ? String(dto.rate) : '',
     }
   }
-
-  async function handleQuickShare(summary) {
-    setShareError(null)
-    setSharingId(summary.id)
-    try {
-      const full = await api.getQuote(summary.id)
-      setShareQuote(full) // mounts off-screen below; the effect picks it up once it's rendered
-    } catch (err) {
-      setShareError(err.message || 'Could not load this quote to share')
-      setSharingId(null)
-    }
+  function mapRoomFromApi(dto) {
+    return { _key: nextKey(), id: dto.id, name: dto.name, items: dto.items.map(mapItemFromApi) }
+  }
+  function mapSpecFromApi(dto) {
+    return { _key: nextKey(), id: dto.id, itemLabel: dto.itemLabel, detail: dto.detail || '', brand: dto.brand || '' }
+  }
+  function mapTermFromApi(dto) {
+    return { _key: nextKey(), id: dto.id, text: dto.text }
+  }
+  // Defaults come from a different table (DefaultMaterialSpecItem/DefaultTermItem) - their ids
+  // must NOT be reused as this quote's own row ids, so always force id: null here.
+  function mapSpecFromDefaults(dto) {
+    return { _key: nextKey(), id: null, itemLabel: dto.itemLabel, detail: dto.detail || '', brand: dto.brand || '' }
+  }
+  function mapTermFromDefaults(dto) {
+    return { _key: nextKey(), id: null, text: dto.text }
   }
 
-  // Once shareQuote is set, QuotePdfTemplate renders off-screen (see the hidden div below) -
-  // this effect then captures it exactly like QuoteView.handleShareWhatsApp does, so resending
-  // an existing quote from the home screen behaves identically to sharing from the full view.
-  useEffect(() => {
-    if (!shareQuote || !shareCaptureRef.current) return
-    let cancelled = false
+  // Sets every piece of builder state from a plain snapshot object - used both to apply the
+  // freshly-loaded server/default state and to overlay a restored local draft on top of it,
+  // so both code paths stay in sync instead of duplicating ~10 setter calls twice.
+  function applySnapshot(s) {
+    setCustomerName(s.customerName || '')
+    setCustomerPhone(s.customerPhone || '')
+    setCustomerAddress(s.customerAddress || '')
+    setQuoteDate(s.quoteDate || todayISO())
+    setRooms(s.rooms && s.rooms.length ? s.rooms : [emptyRoom()])
+    setExpandedRoomKey(s.expandedRoomKey ?? null)
+    setAccessoriesDescription(s.accessoriesDescription || '')
+    setAccessoriesAmount(s.accessoriesAmount != null ? String(s.accessoriesAmount) : '')
+    setMaterialSpecItems(s.materialSpecItems || [])
+    setTermItems(s.termItems || [])
+    setRoundedTotal(s.roundedTotal != null ? String(s.roundedTotal) : '')
+    setRoundedTotalTouched(Boolean(s.roundedTotalTouched))
+  }
 
-    ;(async () => {
-      try {
-        const blob = await generateQuotePdfBlob(shareCaptureRef.current)
-        if (cancelled) return
-        const fileName = pdfFileNameFor(shareQuote.customerName)
-        const file = new File([blob], fileName, { type: 'application/pdf' })
-        const message = buildWhatsAppMessage(shareQuote)
-
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: message, text: message })
-        } else {
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = fileName
-          a.click()
-          URL.revokeObjectURL(url)
-        }
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          setShareError(err.message || 'Could not prepare the PDF to share')
-        }
-      } finally {
-        if (!cancelled) {
-          setSharingId(null)
-          setShareQuote(null)
+  // Restored draft rooms/items/etc. already carry their own "_key" values (e.g. "k3") from the
+  // session that saved them. If keyCounter isn't advanced past the highest one, a *newly* added
+  // room/item after restoring could collide with a key already in use, confusing React's list
+  // reconciliation. This scans the draft once and fast-forwards the counter past it.
+  function bumpKeyCounterPastDraft(draft) {
+    let maxNum = -1
+    const scan = (arr) => {
+      for (const o of arr || []) {
+        if (typeof o._key === 'string' && o._key.startsWith('k')) {
+          const n = parseInt(o._key.slice(1), 10)
+          if (!isNaN(n) && n > maxNum) maxNum = n
         }
       }
-    })()
+    }
+    scan(draft.rooms)
+    ;(draft.rooms || []).forEach((r) => scan(r.items))
+    scan(draft.materialSpecItems)
+    scan(draft.termItems)
+    if (maxNum >= keyCounter.current) keyCounter.current = maxNum + 1
+  }
+
+  // ---- initial load ----
+  useEffect(() => {
+    let cancelled = false
+
+    function afterLoad(snapshot) {
+      if (cancelled) return
+      cleanSnapshotRef.current = snapshot
+      applySnapshot(snapshot)
+
+      const draft = loadDraft(draftKey)
+      if (draft) {
+        bumpKeyCounterPastDraft(draft)
+        applySnapshot(draft)
+        setRestoredDraftAt(draft.savedAt)
+      }
+      setLoading(false)
+    }
+
+    if (isEdit) {
+      api
+        .getQuote(id)
+        .then((q) => {
+          if (cancelled) return
+          afterLoad({
+            customerName: q.customerName || '',
+            customerPhone: q.customerPhone || '',
+            customerAddress: q.customerAddress || '',
+            quoteDate: q.quoteDate || todayISO(),
+            rooms: q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()],
+            expandedRoomKey: null, // review mode: start with everything collapsed for a clean overview
+            accessoriesDescription: q.accessoriesDescription || '',
+            accessoriesAmount: q.accessoriesAmount != null ? String(q.accessoriesAmount) : '',
+            materialSpecItems:
+              q.materialSpecItems && q.materialSpecItems.length ? q.materialSpecItems.map(mapSpecFromApi) : [],
+            termItems: q.termItems && q.termItems.length ? q.termItems.map(mapTermFromApi) : [],
+            roundedTotal: q.roundedTotal != null ? String(q.roundedTotal) : '',
+            roundedTotalTouched: true, // it's a real saved value - never silently overwrite it
+          })
+        })
+        .catch((err) => {
+          if (cancelled) return
+          setLoadError(err.message || 'Could not load this quote')
+          setLoading(false)
+        })
+    } else if (duplicateFromId) {
+      api
+        .getQuote(duplicateFromId)
+        .then((q) => {
+          if (cancelled) return
+          // Customer fields deliberately left blank - this is a fresh quote for a (likely
+          // different) customer, only the room/item/rate structure is being reused.
+          afterLoad({
+            customerName: '',
+            customerPhone: '',
+            customerAddress: '',
+            quoteDate: todayISO(),
+            rooms: q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()],
+            expandedRoomKey: null, // collapsed - this is pre-filled content to review, not a blank form
+            accessoriesDescription: q.accessoriesDescription || '',
+            accessoriesAmount: q.accessoriesAmount != null ? String(q.accessoriesAmount) : '',
+            materialSpecItems:
+              q.materialSpecItems && q.materialSpecItems.length ? q.materialSpecItems.map(mapSpecFromApi) : [],
+            termItems: q.termItems && q.termItems.length ? q.termItems.map(mapTermFromApi) : [],
+            roundedTotal: q.roundedTotal != null ? String(q.roundedTotal) : '',
+            roundedTotalTouched: true,
+          })
+        })
+        .catch((err) => {
+          if (cancelled) return
+          setLoadError(err.message || 'Could not load the quote to duplicate')
+          setLoading(false)
+        })
+    } else {
+      const firstRoom = emptyRoom()
+      api
+        .getDefaults()
+        .then((d) => {
+          if (cancelled) return
+          afterLoad({
+            customerName: '',
+            customerPhone: '',
+            customerAddress: '',
+            quoteDate: todayISO(),
+            rooms: [firstRoom],
+            expandedRoomKey: firstRoom._key,
+            accessoriesDescription: '',
+            accessoriesAmount: '',
+            materialSpecItems: (d.materialSpecItems || []).map(mapSpecFromDefaults),
+            termItems: (d.termItems || []).map(mapTermFromDefaults),
+            roundedTotal: '',
+            roundedTotalTouched: false,
+          })
+        })
+        .catch(() => {
+          // Defaults are a convenience, not critical - proceed with an empty quote if they fail.
+          if (cancelled) return
+          afterLoad({
+            customerName: '',
+            customerPhone: '',
+            customerAddress: '',
+            quoteDate: todayISO(),
+            rooms: [firstRoom],
+            expandedRoomKey: firstRoom._key,
+            accessoriesDescription: '',
+            accessoriesAmount: '',
+            materialSpecItems: [],
+            termItems: [],
+            roundedTotal: '',
+            roundedTotalTouched: false,
+          })
+        })
+    }
 
     return () => {
       cancelled = true
     }
-  }, [shareQuote])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, duplicateFromId])
 
-  const stats = useMemo(() => {
-    const total = quotes.reduce((sum, q) => sum + Number(q.roundedTotal || 0), 0)
-    return { count: quotes.length, total }
-  }, [quotes])
+  // ---- autosave ----
+  // Debounced local snapshot on every meaningful change, so an accidental app close or dropped
+  // connection never loses more than a moment's typing. Skipped while the initial load/restore
+  // is still in flight so we don't overwrite a not-yet-applied draft with blank defaults.
+  useEffect(() => {
+    if (loading) return
+    const t = setTimeout(() => {
+      saveDraft(draftKey, {
+        customerName,
+        customerPhone,
+        customerAddress,
+        quoteDate,
+        rooms,
+        expandedRoomKey,
+        accessoriesDescription,
+        accessoriesAmount,
+        materialSpecItems,
+        termItems,
+        roundedTotal,
+        roundedTotalTouched,
+      })
+    }, 500)
+    return () => clearTimeout(t)
+  }, [
+    loading,
+    draftKey,
+    customerName,
+    customerPhone,
+    customerAddress,
+    quoteDate,
+    rooms,
+    expandedRoomKey,
+    accessoriesDescription,
+    accessoriesAmount,
+    materialSpecItems,
+    termItems,
+    roundedTotal,
+    roundedTotalTouched,
+  ])
 
-  const isFiltering = search.trim().length > 0
+  function discardDraft() {
+    clearDraft(draftKey)
+    setRestoredDraftAt(null)
+    if (cleanSnapshotRef.current) applySnapshot(cleanSnapshotRef.current)
+  }
+
+  // ---- live totals ----
+  const subtotal = useMemo(() => {
+    const itemsSum = rooms.reduce(
+      (sum, r) =>
+        sum + r.items.reduce((s, it) => s + (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0), 0),
+      0
+    )
+    return itemsSum + (parseFloat(accessoriesAmount) || 0)
+  }, [rooms, accessoriesAmount])
+
+  useEffect(() => {
+    if (!roundedTotalTouched) {
+      const suggested = Math.round(subtotal / 1000) * 1000
+      setRoundedTotal(suggested > 0 ? String(suggested) : '')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subtotal])
+
+  // ---- room/item handlers ----
+  function addRoom() {
+    const room = emptyRoom()
+    setRooms([...rooms, room])
+    setExpandedRoomKey(room._key) // auto-expand the new room, which implicitly collapses the rest
+  }
+  function removeRoom(key) {
+    setRooms(rooms.filter((r) => r._key !== key))
+    setExpandedRoomKey((current) => (current === key ? null : current))
+  }
+  function changeRoom(key, updated) {
+    setRooms(rooms.map((r) => (r._key === key ? updated : r)))
+  }
+  function addItem(roomKey) {
+    setRooms(rooms.map((r) => (r._key === roomKey ? { ...r, items: [...r.items, emptyItem()] } : r)))
+  }
+  function changeItem(roomKey, itemKey, updated) {
+    setRooms(
+      rooms.map((r) =>
+        r._key === roomKey ? { ...r, items: r.items.map((it) => (it._key === itemKey ? updated : it)) } : r
+      )
+    )
+  }
+  function removeItem(roomKey, itemKey) {
+    setRooms(
+      rooms.map((r) => (r._key === roomKey ? { ...r, items: r.items.filter((it) => it._key !== itemKey) } : r))
+    )
+  }
+
+  // ---- material spec handlers ----
+  function addSpec() {
+    setMaterialSpecItems([...materialSpecItems, emptySpec()])
+  }
+  function changeSpec(key, field, value) {
+    setMaterialSpecItems(materialSpecItems.map((s) => (s._key === key ? { ...s, [field]: value } : s)))
+  }
+  function removeSpec(key) {
+    setMaterialSpecItems(materialSpecItems.filter((s) => s._key !== key))
+  }
+
+  // ---- terms handlers ----
+  function addTerm() {
+    setTermItems([...termItems, emptyTerm()])
+  }
+  function changeTerm(key, value) {
+    setTermItems(termItems.map((t) => (t._key === key ? { ...t, text: value } : t)))
+  }
+  function removeTerm(key) {
+    setTermItems(termItems.filter((t) => t._key !== key))
+  }
+
+  // ---- save ----
+  async function handleSave() {
+    setValidationError(null)
+    setSaveError(null)
+
+    if (!customerName.trim()) {
+      setValidationError('Customer name is required.')
+      return
+    }
+    if (!customerPhone.trim()) {
+      setValidationError('Customer phone is required.')
+      return
+    }
+
+    const payload = {
+      customerName: customerName.trim(),
+      customerPhone: customerPhone.trim(),
+      customerAddress: customerAddress.trim(),
+      quoteDate,
+      roundedTotal: parseFloat(roundedTotal) || 0,
+      accessoriesDescription: accessoriesDescription.trim(),
+      accessoriesAmount: parseFloat(accessoriesAmount) || 0,
+      rooms: rooms
+        .filter((r) => r.name.trim() || r.items.some((it) => it.base.trim()))
+        .map((r, ri) => ({
+          name: r.name.trim(),
+          sortOrder: ri,
+          items: r.items
+            .filter((it) => it.base.trim())
+            .map((it, ii) => ({
+              description: buildDescription(it.base.trim(), it.unit, it.length, it.width),
+              length: it.unit === 'SQFT' && it.length ? parseFloat(it.length) : null,
+              width: it.unit === 'SQFT' && it.width ? parseFloat(it.width) : null,
+              quantity: parseFloat(it.quantity) || 0,
+              unit: it.unit,
+              rate: parseFloat(it.rate) || 0,
+              amount: (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0),
+              sortOrder: ii,
+            })),
+        })),
+      materialSpecItems: materialSpecItems
+        .filter((s) => s.itemLabel.trim())
+        .map((s, si) => ({ itemLabel: s.itemLabel.trim(), detail: s.detail.trim(), brand: s.brand.trim(), sortOrder: si })),
+      termItems: termItems
+        .filter((t) => t.text.trim())
+        .map((t, ti) => ({ text: t.text.trim(), sortOrder: ti })),
+    }
+
+    setSaving(true)
+    try {
+      if (isEdit) {
+        await api.updateQuote(id, payload)
+      } else {
+        await api.createQuote(payload)
+      }
+      clearDraft(draftKey)
+      navigate('/')
+    } catch (err) {
+      setSaveError(err.message || 'Could not save the quote')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="qb-loading">
+        <div className="qb-spinner" />
+        <span>Loading…</span>
+        <style>{`
+          .qb-loading { min-height: 100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--ink-soft); font-size:14px; }
+          .qb-spinner { width:24px; height:24px; border:2.5px solid var(--rule); border-top-color:var(--slate); border-radius:50%; animation: qb-spin 0.7s linear infinite; }
+          @keyframes qb-spin { to { transform: rotate(360deg); } }
+        `}</style>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="qb-loading">
+        <span>Couldn't load this quote. {loadError}</span>
+        <button className="qb-back-link" onClick={() => navigate('/')}>
+          Back to Quotes
+        </button>
+        <style>{`
+          .qb-loading { min-height: 100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--ink-soft); font-size:14px; padding: 24px; text-align:center; }
+          .qb-back-link { border:1px solid var(--ink); background:transparent; padding:10px 20px; border-radius:10px; font-weight:600; }
+        `}</style>
+      </div>
+    )
+  }
 
   return (
-    <div className="quotes-list-page">
-      <div className="qlp-top">
-        <header className="qlp-header">
-          <div className="qlp-header-top">
-            <img src="/logo-mark.png" alt="" className="qlp-logo" />
-            <div className="qlp-header-text">
-              <h1 className="qlp-title">Masterpiece Quotes</h1>
-              {!loading && !error && quotes.length > 0 && (
-                <p className="qlp-stats mono">
-                  {stats.count} quote{stats.count !== 1 ? 's' : ''} · {formatRupees(stats.total)}
-                </p>
-              )}
-            </div>
-            <div className="qlp-header-actions">
-              <button className="qlp-settings-btn" onClick={() => navigate('/analytics')} aria-label="Analytics">
-                <svg width="19" height="19" viewBox="0 0 20 20" fill="none">
-                  <path d="M4 15.5V9.5M10 15.5V4.5M16 15.5V11.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                </svg>
-              </button>
-              <button className="qlp-settings-btn" onClick={() => navigate('/settings')} aria-label="Settings">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <line x1="3" y1="6" x2="17" y2="6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                  <line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                  <line x1="3" y1="14" x2="17" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                  <circle cx="7" cy="6" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
-                  <circle cx="13" cy="10" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
-                  <circle cx="9" cy="14" r="2" fill="var(--paper)" stroke="currentColor" strokeWidth="1.4" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </header>
+    <div className="qb-page">
+      <header className="qb-header">
+        <button className="qb-header-back" onClick={() => navigate('/')} aria-label="Back">
+          ←
+        </button>
+        <h1 className="qb-header-title">{isEdit ? 'Edit Quote' : duplicateFromId ? 'Duplicate Quote' : 'New Quote'}</h1>
+      </header>
 
-        <div className="qlp-controls">
-          <div className="qlp-search-wrap">
-            <svg className="qlp-search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M11 11L14.5 14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
+      <main className="qb-body">
+        {restoredDraftAt && (
+          <div className="qb-draft-banner">
+            <span>Restored unsaved changes from {formatRelativeTime(restoredDraftAt)}.</span>
+            <button type="button" className="qb-draft-discard" onClick={discardDraft}>
+              Discard
+            </button>
+          </div>
+        )}
+        {duplicateFromId && (
+          <div className="qb-duplicate-banner">
+            Rooms, items, and rates copied over - fill in the new customer's details below.
+          </div>
+        )}
+        {/* ---- Customer details ---- */}
+        <section className="qb-section">
+          <h2 className="qb-section-title">Customer Details</h2>
+          <div className="qb-input-row">
             <input
               type="text"
-              placeholder="Search by name or phone"
-              value={search}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              className="qlp-search"
+              placeholder="Customer name"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              className="qb-input"
             />
-            <span className="qlp-search-voice">
-              <VoiceButton onResult={(text) => handleSearchChange(text.trim())} label="Search by voice" />
-            </span>
+            <VoiceButton onResult={(text) => setCustomerName(text.trim())} label="Say customer name" />
           </div>
-        </div>
-      </div>
-
-      <main className="qlp-body">
-        {loading && (
-          <div className="qlp-state">
-            <div className="qlp-spinner" />
-            <span>Loading quotes…</span>
+          <input
+            type="tel"
+            placeholder="Phone number (with country code, e.g. 91XXXXXXXXXX)"
+            value={customerPhone}
+            onChange={(e) => setCustomerPhone(e.target.value)}
+            className="qb-input"
+          />
+          <div className="qb-input-row">
+            <textarea
+              placeholder="Address"
+              value={customerAddress}
+              onChange={(e) => setCustomerAddress(e.target.value)}
+              className="qb-input qb-textarea"
+              rows={2}
+            />
+            <VoiceButton onResult={(text) => setCustomerAddress(text.trim())} label="Say address" />
           </div>
-        )}
-
-        {!loading && error && (
-          <div className="qlp-state qlp-error">
-            Couldn't reach the server. {error}
-            <button className="qlp-retry" onClick={() => fetchQuotes()}>
-              Try again
-            </button>
+          <div>
+            <label className="qb-label">Quote date</label>
+            <input
+              type="date"
+              value={quoteDate}
+              onChange={(e) => setQuoteDate(e.target.value)}
+              className="qb-input"
+            />
           </div>
-        )}
+        </section>
 
-        {!loading && !error && quotes.length === 0 && !isFiltering && (
-          <div className="qlp-empty">
-            <EmptyIllustration />
-            <p className="qlp-empty-title">No quotes yet</p>
-            <p className="qlp-empty-sub">Every quote you build for a customer will show up here.</p>
-            <button className="qlp-empty-cta" onClick={() => navigate('/quotes/new')}>
-              Create your first quote
-            </button>
-          </div>
-        )}
-
-        {!loading && !error && quotes.length === 0 && isFiltering && (
-          <div className="qlp-empty">
-            <p className="qlp-empty-title">No matches</p>
-            <p className="qlp-empty-sub">Try a different name.</p>
-          </div>
-        )}
-
-        {!loading &&
-          !error &&
-          quotes.map((q) => (
-            <QuoteCard
-              key={q.id}
-              quote={q}
-              onClick={() => navigate(`/quotes/${q.id}`)}
-              onDuplicate={askDuplicate}
-              onEdit={goEdit}
-              onDelete={askDelete}
-              onShare={handleQuickShare}
-              sharing={sharingId === q.id}
+        {/* ---- Rooms & Items ---- */}
+        <section className="qb-section">
+          <h2 className="qb-section-title">Rooms &amp; Items</h2>
+          {rooms.map((room) => (
+            <RoomBlock
+              key={room._key}
+              room={room}
+              expanded={expandedRoomKey === room._key}
+              onToggleExpand={() =>
+                setExpandedRoomKey((current) => (current === room._key ? null : room._key))
+              }
+              onChange={(updated) => changeRoom(room._key, updated)}
+              onRemove={() => removeRoom(room._key)}
+              onAddItem={() => addItem(room._key)}
+              onChangeItem={(itemKey, updated) => changeItem(room._key, itemKey, updated)}
+              onRemoveItem={(itemKey) => removeItem(room._key, itemKey)}
             />
           ))}
-        {shareError && <p className="qlp-share-error">{shareError}</p>}
+          <button type="button" className="qb-add-room" onClick={addRoom}>
+            + Add Room
+          </button>
+        </section>
+
+        {/* ---- Accessories ---- */}
+        <section className="qb-section">
+          <h2 className="qb-section-title">Fittings &amp; Accessories</h2>
+          <div className="qb-input-row">
+            <input
+              type="text"
+              placeholder="e.g. Cutlery Basket, Oil Pull-Out, Tandem Box"
+              value={accessoriesDescription}
+              onChange={(e) => setAccessoriesDescription(e.target.value)}
+              className="qb-input"
+            />
+            <VoiceButton onResult={(text) => setAccessoriesDescription(text.trim())} label="Say accessories" />
+          </div>
+          <input
+            type="number"
+            inputMode="decimal"
+            placeholder="Amount"
+            value={accessoriesAmount}
+            onChange={(e) => setAccessoriesAmount(e.target.value)}
+            className="qb-input"
+          />
+        </section>
+
+        {/* ---- Totals ---- */}
+        <section className="qb-section qb-totals-section">
+          <div className="qb-totals-row">
+            <span>Subtotal</span>
+            <span className="mono">{formatRupees(subtotal)}</span>
+          </div>
+          <div className="qb-totals-row qb-totals-final">
+            <span>Final Total</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              value={roundedTotal}
+              onChange={(e) => {
+                setRoundedTotalTouched(true)
+                setRoundedTotal(e.target.value)
+              }}
+              className="qb-total-input mono"
+            />
+          </div>
+          <p className="qb-totals-hint">Auto-suggested to the nearest ₹1,000 - edit freely for discounts.</p>
+        </section>
+
+        {/* ---- Material Spec ---- */}
+        <section className="qb-section">
+          <h2 className="qb-section-title">Material Specification</h2>
+          {materialSpecItems.map((s) => (
+            <div key={s._key} className="qb-spec-row">
+              <input
+                type="text"
+                placeholder="Item (e.g. Plywood)"
+                value={s.itemLabel}
+                onChange={(e) => changeSpec(s._key, 'itemLabel', e.target.value)}
+                className="qb-input qb-spec-label"
+              />
+              <input
+                type="text"
+                placeholder="Detail"
+                value={s.detail}
+                onChange={(e) => changeSpec(s._key, 'detail', e.target.value)}
+                className="qb-input qb-spec-detail"
+              />
+              <input
+                type="text"
+                placeholder="Brand"
+                value={s.brand}
+                onChange={(e) => changeSpec(s._key, 'brand', e.target.value)}
+                className="qb-input qb-spec-brand"
+              />
+              <button type="button" className="qb-row-remove" onClick={() => removeSpec(s._key)}>
+                ×
+              </button>
+            </div>
+          ))}
+          <button type="button" className="qb-add-row" onClick={addSpec}>
+            + Add row
+          </button>
+        </section>
+
+        {/* ---- Terms ---- */}
+        <section className="qb-section">
+          <h2 className="qb-section-title">Terms &amp; Conditions</h2>
+          {termItems.map((t, i) => (
+            <div key={t._key} className="qb-term-row">
+              <span className="qb-term-num mono">{i + 1}</span>
+              <input
+                type="text"
+                placeholder="Term"
+                value={t.text}
+                onChange={(e) => changeTerm(t._key, e.target.value)}
+                className="qb-input qb-term-input"
+              />
+              <button type="button" className="qb-row-remove" onClick={() => removeTerm(t._key)}>
+                ×
+              </button>
+            </div>
+          ))}
+          <button type="button" className="qb-add-row" onClick={addTerm}>
+            + Add term
+          </button>
+        </section>
+
+        {validationError && <p className="qb-error-text">{validationError}</p>}
+        {saveError && <p className="qb-error-text">Couldn't save. {saveError}</p>}
       </main>
 
-      <button className="qlp-fab" onClick={() => navigate('/quotes/new')} aria-label="New quote">
-        +
-      </button>
-
-      {/* Hidden off-screen render used only to capture a PDF for quick-share - mirrors the
-          same pattern QuoteView uses for its own capture ref. Only mounted while a share is
-          actually in progress, so it doesn't cost anything the rest of the time. */}
-      {shareQuote && (
-        <div style={{ position: 'absolute', left: '-9999px', top: 0 }}>
-          <div ref={shareCaptureRef}>
-            <QuotePdfTemplate quote={shareQuote} />
-          </div>
-        </div>
-      )}
-
-      {pendingAction && pendingAction.type === 'delete' && (
-        <ConfirmDialog
-          open
-          title="Delete this quote?"
-          message={`This will permanently delete the quote for ${pendingAction.quote.customerName}. This can't be undone.${
-            actionError ? ` ${actionError}` : ''
-          }`}
-          confirmLabel="Delete"
-          busyLabel="Deleting…"
-          danger
-          busy={actionBusy}
-          onConfirm={handleConfirm}
-          onCancel={() => {
-            if (!actionBusy) setPendingAction(null)
-          }}
-        />
-      )}
-
-      {pendingAction && pendingAction.type === 'duplicate' && (
-        <ConfirmDialog
-          open
-          title="Duplicate this quote?"
-          message={`This will create a new quote using ${pendingAction.quote.customerName}'s rooms, items, and rates - you'll enter the new customer's details next.`}
-          confirmLabel="Duplicate"
-          busyLabel="Opening…"
-          danger={false}
-          busy={actionBusy}
-          onConfirm={handleConfirm}
-          onCancel={() => {
-            if (!actionBusy) setPendingAction(null)
-          }}
-        />
-      )}
+      <div className="qb-save-bar">
+        <button className="qb-save-btn" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : `Save Quote · ${formatRupees(roundedTotal || subtotal)}`}
+        </button>
+      </div>
 
       <style>{`
-        .quotes-list-page {
-          height: 100vh;
-          height: 100dvh;
+        .qb-page {
+          min-height: 100vh;
+          min-height: 100dvh;
           background: var(--bg);
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
+          padding-bottom: 100px;
         }
-        .qlp-top {
-          flex-shrink: 0;
-        }
-        .qlp-header {
-          background: linear-gradient(160deg, #2c2831 0%, #201d22 100%);
-          padding: 22px 20px 28px;
-          border-radius: 0 0 22px 22px;
-          box-shadow: 0 8px 24px rgba(35, 33, 38, 0.18);
-        }
-        .qlp-header-top {
+        .qb-header {
           display: flex;
           align-items: center;
           gap: 12px;
+          padding: 18px 20px;
+          background: linear-gradient(160deg, #2c2831 0%, #201d22 100%);
+          border-radius: 0 0 22px 22px;
+          box-shadow: 0 8px 24px rgba(35, 33, 38, 0.18);
         }
-        .qlp-header-text {
-          flex: 1;
-          min-width: 0;
-        }
-        .qlp-header-actions {
-          display: flex;
-          gap: 8px;
-          flex-shrink: 0;
-        }
-        .qlp-settings-btn {
-          flex-shrink: 0;
-          width: 38px;
-          height: 38px;
+        .qb-header-back {
+          width: 34px;
+          height: 34px;
           border-radius: 10px;
           border: none;
           background: rgba(255,255,255,0.1);
           color: var(--bg);
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          font-size: 17px;
         }
-        .qlp-settings-btn:active {
-          background: rgba(255,255,255,0.18);
-        }
-        .qlp-logo {
-          width: 54px;
-          height: 54px;
-          object-fit: contain;
-          filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
-        }
-        .qlp-title {
-          font-size: 19px;
+        .qb-header-title {
+          font-size: 18px;
           font-weight: 500;
           color: var(--bg);
         }
-        .qlp-stats {
-          font-size: 11.5px;
-          color: var(--terracotta);
-          margin-top: 3px;
-          letter-spacing: 0.01em;
+        .qb-body {
+          padding: 18px 20px 0;
         }
-        .qlp-controls {
-          padding: 0 20px;
-          margin-top: -16px;
-          position: relative;
-          z-index: 2;
+        .qb-duplicate-banner {
+          background: var(--sage-light);
+          color: var(--sage);
+          border: 1px solid var(--sage);
+          border-radius: 11px;
+          padding: 11px 14px;
+          font-size: 13px;
+          font-weight: 500;
+          margin-bottom: 16px;
         }
-        .qlp-search-wrap {
-          position: relative;
+        .qb-draft-banner {
           display: flex;
           align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          background: var(--brick-light);
+          color: var(--brick);
+          border: 1px solid var(--brick);
+          border-radius: 11px;
+          padding: 11px 14px;
+          font-size: 13px;
+          font-weight: 500;
+          margin-bottom: 16px;
         }
-        .qlp-search-icon {
-          position: absolute;
-          left: 15px;
-          color: var(--ink-soft);
-          pointer-events: none;
+        .qb-draft-discard {
+          flex-shrink: 0;
+          background: transparent;
+          border: none;
+          color: var(--brick);
+          font-weight: 700;
+          font-size: 12.5px;
+          text-decoration: underline;
         }
-        .qlp-search {
-          width: 100%;
-          padding: 13px 46px 13px 40px;
-          border: 1px solid var(--rule);
-          border-radius: 13px;
+        .qb-section {
           background: var(--paper);
-          font-size: 14px;
-          box-shadow: 0 4px 16px rgba(35, 33, 38, 0.1);
-          transition: box-shadow 0.15s ease, border-color 0.15s ease;
+          border: 1px solid var(--rule);
+          border-radius: 15px;
+          padding: 16px;
+          margin-bottom: 16px;
+          box-shadow: 0 3px 12px rgba(35, 33, 38, 0.06);
         }
-        .qlp-search:focus {
+        .qb-section-title {
+          font-size: 15px;
+          font-weight: 600;
+          margin-bottom: 12px;
+        }
+        .qb-input {
+          width: 100%;
+          border: 1px solid var(--rule);
+          border-radius: 10px;
+          background: var(--bg);
+          padding: 11px 12px;
+          font-size: 14px;
+          margin-bottom: 10px;
+        }
+        .qb-input:focus {
           outline: none;
           border-color: var(--slate);
-          box-shadow: 0 4px 16px rgba(89, 96, 115, 0.18), 0 0 0 3px rgba(89, 96, 115, 0.12);
         }
-        .qlp-search-voice {
-          position: absolute;
-          right: 8px;
-          top: 50%;
-          transform: translateY(-50%);
-        }
-        .qlp-body {
-          flex: 1;
-          min-height: 0;
-          overflow-y: auto;
-          -webkit-overflow-scrolling: touch;
-          padding: 20px 20px 100px;
-        }
-        .qlp-state {
+        .qb-input:last-child { margin-bottom: 0; }
+        .qb-input-row {
           display: flex;
-          flex-direction: column;
           align-items: center;
-          gap: 14px;
-          text-align: center;
+          gap: 8px;
+          margin-bottom: 10px;
+        }
+        .qb-input-row:last-child { margin-bottom: 0; }
+        .qb-input-row .qb-input {
+          flex: 1;
+          min-width: 0;
+          margin-bottom: 0;
+        }
+        .qb-textarea {
+          resize: vertical;
+          font-family: inherit;
+        }
+        .qb-label {
+          display: block;
+          font-size: 11px;
           color: var(--ink-soft);
-          font-size: 14px;
-          padding: 70px 20px;
-        }
-        .qlp-spinner {
-          width: 22px;
-          height: 22px;
-          border: 2.5px solid var(--rule);
-          border-top-color: var(--slate);
-          border-radius: 50%;
-          animation: qlp-spin 0.7s linear infinite;
-        }
-        @keyframes qlp-spin {
-          to { transform: rotate(360deg); }
-        }
-        .qlp-share-error {
-          color: var(--brick);
-          font-size: 12.5px;
-          text-align: center;
-          padding: 10px 0 0;
-        }
-        .qlp-retry {
-          border: 1px solid var(--ink);
-          background: transparent;
-          padding: 8px 18px;
-          border-radius: 10px;
-          font-size: 13px;
+          margin-bottom: 4px;
           font-weight: 600;
         }
-        .qlp-empty {
+        .qb-add-room {
+          width: 100%;
+          border: 1.5px dashed var(--slate);
+          background: transparent;
+          color: var(--slate);
+          font-weight: 600;
+          font-size: 14px;
+          padding: 12px;
+          border-radius: 11px;
+        }
+        .qb-totals-section {
+          background: linear-gradient(160deg, #2c2831 0%, #201d22 100%);
+          border: none;
+        }
+        .qb-totals-row {
           display: flex;
-          flex-direction: column;
+          justify-content: space-between;
           align-items: center;
-          text-align: center;
-          padding: 56px 24px 40px;
-        }
-        .qlp-empty-title {
-          font-family: var(--font-display);
-          font-size: 20px;
-          font-weight: 500;
-          margin-top: 20px;
-          margin-bottom: 6px;
-        }
-        .qlp-empty-sub {
-          color: var(--ink-soft);
+          color: rgba(250,247,241,0.7);
           font-size: 13.5px;
-          max-width: 240px;
-          line-height: 1.5;
+          padding: 4px 0;
         }
-        .qlp-empty-cta {
-          margin-top: 20px;
+        .qb-totals-final {
+          margin-top: 6px;
+          padding-top: 12px;
+          border-top: 1px solid rgba(250,247,241,0.15);
+          color: var(--bg);
+          font-size: 15px;
+          font-weight: 600;
+        }
+        .qb-total-input {
+          width: 140px;
+          text-align: right;
+          background: rgba(255,255,255,0.08);
+          border: 1px solid rgba(255,255,255,0.2);
+          border-radius: 8px;
+          padding: 7px 10px;
+          color: var(--terracotta);
+          font-size: 16px;
+          font-weight: 600;
+        }
+        .qb-total-input:focus {
+          outline: none;
+          border-color: var(--terracotta);
+        }
+        .qb-totals-hint {
+          font-size: 11px;
+          color: rgba(250,247,241,0.5);
+          margin-top: 10px;
+        }
+        .qb-spec-row, .qb-term-row {
+          display: flex;
+          gap: 6px;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+        .qb-spec-label { flex: 1.2; margin-bottom: 0; }
+        .qb-spec-detail { flex: 1.4; margin-bottom: 0; }
+        .qb-spec-brand { flex: 1; margin-bottom: 0; }
+        .qb-term-num {
+          flex-shrink: 0;
+          width: 20px;
+          font-size: 12px;
+          color: var(--brick);
+          text-align: center;
+        }
+        .qb-term-input { flex: 1; margin-bottom: 0; }
+        .qb-row-remove {
+          flex-shrink: 0;
+          width: 28px;
+          height: 28px;
+          border-radius: 8px;
+          border: none;
+          background: var(--brick-light);
+          color: var(--brick);
+          font-size: 16px;
+        }
+        .qb-add-row {
+          border: 1.5px dashed var(--rule);
+          background: transparent;
+          color: var(--ink-soft);
+          font-size: 12.5px;
+          font-weight: 600;
+          padding: 8px 14px;
+          border-radius: 8px;
+          margin-top: 2px;
+        }
+        .qb-error-text {
+          color: var(--brick);
+          font-size: 13px;
+          text-align: center;
+          padding: 8px 0 16px;
+        }
+        .qb-save-bar {
+          position: fixed;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
+          background: linear-gradient(to top, var(--bg) 70%, transparent);
+        }
+        .qb-save-btn {
+          width: 100%;
           background: var(--ink);
           color: var(--bg);
           border: none;
-          padding: 12px 22px;
-          border-radius: 11px;
-          font-size: 14px;
+          padding: 15px;
+          border-radius: 13px;
+          font-size: 15px;
           font-weight: 600;
-          box-shadow: 0 4px 14px rgba(35, 33, 38, 0.25);
+          box-shadow: 0 8px 24px rgba(35, 33, 38, 0.3);
         }
-        .qlp-empty-cta:active {
-          transform: scale(0.97);
+        .qb-save-btn:disabled {
+          opacity: 0.6;
         }
-        .qlp-fab {
-          position: fixed;
-          right: 22px;
-          bottom: calc(24px + env(safe-area-inset-bottom));
-          width: 58px;
-          height: 58px;
-          border-radius: 50%;
-          background: linear-gradient(160deg, #2c2831, #1c1a1e);
-          color: var(--bg);
-          font-size: 28px;
-          font-weight: 400;
-          border: none;
-          box-shadow: 0 8px 24px rgba(35, 33, 38, 0.4), 0 2px 6px rgba(35, 33, 38, 0.3);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          line-height: 1;
-        }
-        .qlp-fab:active {
-          transform: scale(0.94);
+        .qb-save-btn:active:not(:disabled) {
+          transform: scale(0.98);
         }
       `}</style>
     </div>

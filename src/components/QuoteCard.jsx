@@ -1,11 +1,14 @@
 import { formatRupees, formatDate, formatRelativeTime } from '../utils/format'
 
-export default function QuoteCard({ quote, onClick, onDuplicate, onEdit, onDelete, onShare, sharing }) {
+export default function QuoteCard({ quote, onClick, onDuplicate, onEdit, onDelete, onShare, sharing, hasDraft }) {
   return (
     <button className="quote-card" onClick={onClick}>
       <div className="quote-card-main">
         <div className="quote-card-top">
-          <h3 className="quote-card-name">{quote.customerName}</h3>
+          <div className="quote-card-name-wrap">
+            {hasDraft && <span className="quote-card-draft-badge">Draft</span>}
+            <h3 className="quote-card-name">{quote.customerName}</h3>
+          </div>
           <div className="quote-card-icon-row">
             <button
               type="button"
@@ -130,6 +133,13 @@ export default function QuoteCard({ quote, onClick, onDuplicate, onEdit, onDelet
           align-items: center;
           gap: 8px;
         }
+        .quote-card-name-wrap {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          min-width: 0;
+          flex-shrink: 1;
+        }
         .quote-card-name {
           font-size: 17px;
           font-weight: 500;
@@ -137,7 +147,17 @@ export default function QuoteCard({ quote, onClick, onDuplicate, onEdit, onDelet
           text-overflow: ellipsis;
           white-space: nowrap;
           min-width: 0;
-          flex-shrink: 1;
+        }
+        .quote-card-draft-badge {
+          flex-shrink: 0;
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          color: var(--brick);
+          background: var(--brick-light);
+          border-radius: 6px;
+          padding: 3px 7px;
         }
         .quote-card-icon-row {
           display: flex;

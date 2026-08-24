@@ -4,7 +4,8 @@ import { api } from '../api/client'
 import RoomBlock from '../components/RoomBlock'
 import VoiceButton from '../components/VoiceButton'
 import { parseDescription, buildDescription } from '../components/ItemRow'
-import { formatRupees } from '../utils/format'
+import { formatRupees, formatRelativeTime } from '../utils/format'
+import { draftKeyFor, saveDraft, loadDraft, clearDraft } from '../utils/draftStorage'
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
@@ -16,6 +17,7 @@ export default function QuoteBuilder() {
   const duplicateFromId = searchParams.get('from')
   const navigate = useNavigate()
   const isEdit = Boolean(id)
+  const draftKey = draftKeyFor({ isEdit, id, duplicateFromId })
   const keyCounter = useRef(0)
   const nextKey = () => `k${keyCounter.current++}`
 
@@ -24,6 +26,13 @@ export default function QuoteBuilder() {
   const [loadError, setLoadError] = useState(null)
   const [saveError, setSaveError] = useState(null)
   const [validationError, setValidationError] = useState(null)
+
+  // Set once a local draft is found and restored on load - shown as a dismissible banner so
+  // Kalyan knows unsaved changes were brought back, and can discard them if they're stale.
+  const [restoredDraftAt, setRestoredDraftAt] = useState(null)
+  // Holds the "clean" state (server data for edit/duplicate, or nothing for new) so Discard
+  // can revert to it instead of just clearing the form.
+  const cleanSnapshotRef = useRef(null)
 
   const [customerName, setCustomerName] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
@@ -86,30 +95,83 @@ export default function QuoteBuilder() {
     return { _key: nextKey(), id: null, text: dto.text }
   }
 
+  // Sets every piece of builder state from a plain snapshot object - used both to apply the
+  // freshly-loaded server/default state and to overlay a restored local draft on top of it,
+  // so both code paths stay in sync instead of duplicating ~10 setter calls twice.
+  function applySnapshot(s) {
+    setCustomerName(s.customerName || '')
+    setCustomerPhone(s.customerPhone || '')
+    setCustomerAddress(s.customerAddress || '')
+    setQuoteDate(s.quoteDate || todayISO())
+    setRooms(s.rooms && s.rooms.length ? s.rooms : [emptyRoom()])
+    setExpandedRoomKey(s.expandedRoomKey ?? null)
+    setAccessoriesDescription(s.accessoriesDescription || '')
+    setAccessoriesAmount(s.accessoriesAmount != null ? String(s.accessoriesAmount) : '')
+    setMaterialSpecItems(s.materialSpecItems || [])
+    setTermItems(s.termItems || [])
+    setRoundedTotal(s.roundedTotal != null ? String(s.roundedTotal) : '')
+    setRoundedTotalTouched(Boolean(s.roundedTotalTouched))
+  }
+
+  // Restored draft rooms/items/etc. already carry their own "_key" values (e.g. "k3") from the
+  // session that saved them. If keyCounter isn't advanced past the highest one, a *newly* added
+  // room/item after restoring could collide with a key already in use, confusing React's list
+  // reconciliation. This scans the draft once and fast-forwards the counter past it.
+  function bumpKeyCounterPastDraft(draft) {
+    let maxNum = -1
+    const scan = (arr) => {
+      for (const o of arr || []) {
+        if (typeof o._key === 'string' && o._key.startsWith('k')) {
+          const n = parseInt(o._key.slice(1), 10)
+          if (!isNaN(n) && n > maxNum) maxNum = n
+        }
+      }
+    }
+    scan(draft.rooms)
+    ;(draft.rooms || []).forEach((r) => scan(r.items))
+    scan(draft.materialSpecItems)
+    scan(draft.termItems)
+    if (maxNum >= keyCounter.current) keyCounter.current = maxNum + 1
+  }
+
   // ---- initial load ----
   useEffect(() => {
     let cancelled = false
+
+    function afterLoad(snapshot) {
+      if (cancelled) return
+      cleanSnapshotRef.current = snapshot
+      applySnapshot(snapshot)
+
+      const draft = loadDraft(draftKey)
+      if (draft) {
+        bumpKeyCounterPastDraft(draft)
+        applySnapshot(draft)
+        setRestoredDraftAt(draft.savedAt)
+      }
+      setLoading(false)
+    }
 
     if (isEdit) {
       api
         .getQuote(id)
         .then((q) => {
           if (cancelled) return
-          setCustomerName(q.customerName || '')
-          setCustomerPhone(q.customerPhone || '')
-          setCustomerAddress(q.customerAddress || '')
-          setQuoteDate(q.quoteDate || todayISO())
-          setRooms(q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()])
-          setExpandedRoomKey(null) // review mode: start with everything collapsed for a clean overview
-          setAccessoriesDescription(q.accessoriesDescription || '')
-          setAccessoriesAmount(q.accessoriesAmount != null ? String(q.accessoriesAmount) : '')
-          setMaterialSpecItems(
-            q.materialSpecItems && q.materialSpecItems.length ? q.materialSpecItems.map(mapSpecFromApi) : []
-          )
-          setTermItems(q.termItems && q.termItems.length ? q.termItems.map(mapTermFromApi) : [])
-          setRoundedTotal(q.roundedTotal != null ? String(q.roundedTotal) : '')
-          setRoundedTotalTouched(true) // it's a real saved value - never silently overwrite it
-          setLoading(false)
+          afterLoad({
+            customerName: q.customerName || '',
+            customerPhone: q.customerPhone || '',
+            customerAddress: q.customerAddress || '',
+            quoteDate: q.quoteDate || todayISO(),
+            rooms: q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()],
+            expandedRoomKey: null, // review mode: start with everything collapsed for a clean overview
+            accessoriesDescription: q.accessoriesDescription || '',
+            accessoriesAmount: q.accessoriesAmount != null ? String(q.accessoriesAmount) : '',
+            materialSpecItems:
+              q.materialSpecItems && q.materialSpecItems.length ? q.materialSpecItems.map(mapSpecFromApi) : [],
+            termItems: q.termItems && q.termItems.length ? q.termItems.map(mapTermFromApi) : [],
+            roundedTotal: q.roundedTotal != null ? String(q.roundedTotal) : '',
+            roundedTotalTouched: true, // it's a real saved value - never silently overwrite it
+          })
         })
         .catch((err) => {
           if (cancelled) return
@@ -123,18 +185,21 @@ export default function QuoteBuilder() {
           if (cancelled) return
           // Customer fields deliberately left blank - this is a fresh quote for a (likely
           // different) customer, only the room/item/rate structure is being reused.
-          setQuoteDate(todayISO())
-          setRooms(q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()])
-          setExpandedRoomKey(null) // collapsed - this is pre-filled content to review, not a blank form
-          setAccessoriesDescription(q.accessoriesDescription || '')
-          setAccessoriesAmount(q.accessoriesAmount != null ? String(q.accessoriesAmount) : '')
-          setMaterialSpecItems(
-            q.materialSpecItems && q.materialSpecItems.length ? q.materialSpecItems.map(mapSpecFromApi) : []
-          )
-          setTermItems(q.termItems && q.termItems.length ? q.termItems.map(mapTermFromApi) : [])
-          setRoundedTotal(q.roundedTotal != null ? String(q.roundedTotal) : '')
-          setRoundedTotalTouched(true)
-          setLoading(false)
+          afterLoad({
+            customerName: '',
+            customerPhone: '',
+            customerAddress: '',
+            quoteDate: todayISO(),
+            rooms: q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()],
+            expandedRoomKey: null, // collapsed - this is pre-filled content to review, not a blank form
+            accessoriesDescription: q.accessoriesDescription || '',
+            accessoriesAmount: q.accessoriesAmount != null ? String(q.accessoriesAmount) : '',
+            materialSpecItems:
+              q.materialSpecItems && q.materialSpecItems.length ? q.materialSpecItems.map(mapSpecFromApi) : [],
+            termItems: q.termItems && q.termItems.length ? q.termItems.map(mapTermFromApi) : [],
+            roundedTotal: q.roundedTotal != null ? String(q.roundedTotal) : '',
+            roundedTotalTouched: true,
+          })
         })
         .catch((err) => {
           if (cancelled) return
@@ -143,19 +208,42 @@ export default function QuoteBuilder() {
         })
     } else {
       const firstRoom = emptyRoom()
-      setRooms([firstRoom])
-      setExpandedRoomKey(firstRoom._key)
       api
         .getDefaults()
         .then((d) => {
           if (cancelled) return
-          setMaterialSpecItems((d.materialSpecItems || []).map(mapSpecFromDefaults))
-          setTermItems((d.termItems || []).map(mapTermFromDefaults))
-          setLoading(false)
+          afterLoad({
+            customerName: '',
+            customerPhone: '',
+            customerAddress: '',
+            quoteDate: todayISO(),
+            rooms: [firstRoom],
+            expandedRoomKey: firstRoom._key,
+            accessoriesDescription: '',
+            accessoriesAmount: '',
+            materialSpecItems: (d.materialSpecItems || []).map(mapSpecFromDefaults),
+            termItems: (d.termItems || []).map(mapTermFromDefaults),
+            roundedTotal: '',
+            roundedTotalTouched: false,
+          })
         })
         .catch(() => {
           // Defaults are a convenience, not critical - proceed with an empty quote if they fail.
-          if (!cancelled) setLoading(false)
+          if (cancelled) return
+          afterLoad({
+            customerName: '',
+            customerPhone: '',
+            customerAddress: '',
+            quoteDate: todayISO(),
+            rooms: [firstRoom],
+            expandedRoomKey: firstRoom._key,
+            accessoriesDescription: '',
+            accessoriesAmount: '',
+            materialSpecItems: [],
+            termItems: [],
+            roundedTotal: '',
+            roundedTotalTouched: false,
+          })
         })
     }
 
@@ -164,6 +252,52 @@ export default function QuoteBuilder() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, duplicateFromId])
+
+  // ---- autosave ----
+  // Debounced local snapshot on every meaningful change, so an accidental app close or dropped
+  // connection never loses more than a moment's typing. Skipped while the initial load/restore
+  // is still in flight so we don't overwrite a not-yet-applied draft with blank defaults.
+  useEffect(() => {
+    if (loading) return
+    const t = setTimeout(() => {
+      saveDraft(draftKey, {
+        customerName,
+        customerPhone,
+        customerAddress,
+        quoteDate,
+        rooms,
+        expandedRoomKey,
+        accessoriesDescription,
+        accessoriesAmount,
+        materialSpecItems,
+        termItems,
+        roundedTotal,
+        roundedTotalTouched,
+      })
+    }, 500)
+    return () => clearTimeout(t)
+  }, [
+    loading,
+    draftKey,
+    customerName,
+    customerPhone,
+    customerAddress,
+    quoteDate,
+    rooms,
+    expandedRoomKey,
+    accessoriesDescription,
+    accessoriesAmount,
+    materialSpecItems,
+    termItems,
+    roundedTotal,
+    roundedTotalTouched,
+  ])
+
+  function discardDraft() {
+    clearDraft(draftKey)
+    setRestoredDraftAt(null)
+    if (cleanSnapshotRef.current) applySnapshot(cleanSnapshotRef.current)
+  }
 
   // ---- live totals ----
   const subtotal = useMemo(() => {
@@ -289,6 +423,7 @@ export default function QuoteBuilder() {
       } else {
         await api.createQuote(payload)
       }
+      clearDraft(draftKey)
       navigate('/')
     } catch (err) {
       setSaveError(err.message || 'Could not save the quote')
@@ -336,6 +471,14 @@ export default function QuoteBuilder() {
       </header>
 
       <main className="qb-body">
+        {restoredDraftAt && (
+          <div className="qb-draft-banner">
+            <span>Restored unsaved changes from {formatRelativeTime(restoredDraftAt)}.</span>
+            <button type="button" className="qb-draft-discard" onClick={discardDraft}>
+              Discard
+            </button>
+          </div>
+        )}
         {duplicateFromId && (
           <div className="qb-duplicate-banner">
             Rooms, items, and rates copied over - fill in the new customer's details below.
@@ -561,6 +704,29 @@ export default function QuoteBuilder() {
           font-size: 13px;
           font-weight: 500;
           margin-bottom: 16px;
+        }
+        .qb-draft-banner {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          background: var(--brick-light);
+          color: var(--brick);
+          border: 1px solid var(--brick);
+          border-radius: 11px;
+          padding: 11px 14px;
+          font-size: 13px;
+          font-weight: 500;
+          margin-bottom: 16px;
+        }
+        .qb-draft-discard {
+          flex-shrink: 0;
+          background: transparent;
+          border: none;
+          color: var(--brick);
+          font-weight: 700;
+          font-size: 12.5px;
+          text-decoration: underline;
         }
         .qb-section {
           background: var(--paper);
