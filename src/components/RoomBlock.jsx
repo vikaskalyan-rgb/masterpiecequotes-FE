@@ -1,4 +1,5 @@
 import ItemRow from './ItemRow'
+import VoiceButton from './VoiceButton'
 
 function itemAmount(it) {
   return (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)
@@ -57,6 +58,13 @@ export default function RoomBlock({
           <button type="button" className="room-name-display" onClick={onToggleExpand}>
             {room.name || 'Untitled Room'}
           </button>
+        )}
+
+        {expanded && (
+          <VoiceButton
+            onResult={(text) => onChange({ ...room, name: text.trim() })}
+            label="Say room name"
+          />
         )}
 
         <button type="button" className="room-remove" onClick={onRemove} aria-label="Remove room">

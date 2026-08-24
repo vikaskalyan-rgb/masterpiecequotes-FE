@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import QuoteCard from '../components/QuoteCard'
 import ConfirmDialog from '../components/ConfirmDialog'
+import VoiceButton from '../components/VoiceButton'
 import { formatRupees } from '../utils/format'
 
 function EmptyIllustration() {
@@ -26,10 +27,17 @@ export default function QuotesList() {
   const [search, setSearch] = useState('')
   const debounceRef = useRef(null)
 
-  const [pendingAction, setPendingAction] = useState(null)
+  // Unified confirm-dialog state - handles both the destructive Delete confirmation and the
+  // non-destructive Duplicate confirmation, so only one dialog can ever be open at a time.
+  const [pendingAction, setPendingAction] = useState(null) // { type: 'delete' | 'duplicate', quote }
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState(null)
 
+  // #root has padding for safe-area insets stacked on top of its 100dvh min-height, which can
+  // make the outer document taller than the viewport on phones with a notch/home-indicator -
+  // that lets the whole page scroll, defeating the fixed-header/scrollable-list layout below.
+  // Locking body scroll here (and restoring it on unmount) fixes that without touching the
+  // other screens, which rely on normal document scrolling.
   useEffect(() => {
     const html = document.documentElement
     const originalHtmlOverflow = html.style.overflow
@@ -85,6 +93,7 @@ export default function QuotesList() {
       return
     }
 
+    // type === 'delete'
     setActionBusy(true)
     setActionError(null)
     try {
@@ -110,7 +119,7 @@ export default function QuotesList() {
       <div className="qlp-top">
         <header className="qlp-header">
           <div className="qlp-header-top">
-            <img src="/logos-mark.png" alt="" className="qlp-logo" />
+            <img src="/logo-mark.png" alt="" className="qlp-logo" />
             <div className="qlp-header-text">
               <h1 className="qlp-title">Masterpiece Quotes</h1>
               {!loading && !error && quotes.length > 0 && (
@@ -152,6 +161,9 @@ export default function QuotesList() {
               onChange={(e) => handleSearchChange(e.target.value)}
               className="qlp-search"
             />
+            <span className="qlp-search-voice">
+              <VoiceButton onResult={(text) => handleSearchChange(text.trim())} label="Search by voice" />
+            </span>
           </div>
         </div>
       </div>
@@ -294,7 +306,7 @@ export default function QuotesList() {
           width: 54px;
           height: 54px;
           object-fit: contain;
-         
+          filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
         }
         .qlp-title {
           font-size: 19px;
@@ -326,7 +338,7 @@ export default function QuotesList() {
         }
         .qlp-search {
           width: 100%;
-          padding: 13px 16px 13px 40px;
+          padding: 13px 46px 13px 40px;
           border: 1px solid var(--rule);
           border-radius: 13px;
           background: var(--paper);
@@ -338,6 +350,12 @@ export default function QuotesList() {
           outline: none;
           border-color: var(--slate);
           box-shadow: 0 4px 16px rgba(89, 96, 115, 0.18), 0 0 0 3px rgba(89, 96, 115, 0.12);
+        }
+        .qlp-search-voice {
+          position: absolute;
+          right: 8px;
+          top: 50%;
+          transform: translateY(-50%);
         }
         .qlp-body {
           flex: 1;

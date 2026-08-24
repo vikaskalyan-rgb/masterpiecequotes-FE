@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import RoomBlock from '../components/RoomBlock'
+import VoiceButton from '../components/VoiceButton'
 import { parseDescription, buildDescription } from '../components/ItemRow'
 import { formatRupees } from '../utils/format'
 
@@ -343,13 +344,16 @@ export default function QuoteBuilder() {
         {/* ---- Customer details ---- */}
         <section className="qb-section">
           <h2 className="qb-section-title">Customer Details</h2>
-          <input
-            type="text"
-            placeholder="Customer name"
-            value={customerName}
-            onChange={(e) => setCustomerName(e.target.value)}
-            className="qb-input"
-          />
+          <div className="qb-input-row">
+            <input
+              type="text"
+              placeholder="Customer name"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              className="qb-input"
+            />
+            <VoiceButton onResult={(text) => setCustomerName(text.trim())} label="Say customer name" />
+          </div>
           <input
             type="tel"
             placeholder="Phone number (with country code, e.g. 91XXXXXXXXXX)"
@@ -357,13 +361,16 @@ export default function QuoteBuilder() {
             onChange={(e) => setCustomerPhone(e.target.value)}
             className="qb-input"
           />
-          <textarea
-            placeholder="Address"
-            value={customerAddress}
-            onChange={(e) => setCustomerAddress(e.target.value)}
-            className="qb-input qb-textarea"
-            rows={2}
-          />
+          <div className="qb-input-row">
+            <textarea
+              placeholder="Address"
+              value={customerAddress}
+              onChange={(e) => setCustomerAddress(e.target.value)}
+              className="qb-input qb-textarea"
+              rows={2}
+            />
+            <VoiceButton onResult={(text) => setCustomerAddress(text.trim())} label="Say address" />
+          </div>
           <div>
             <label className="qb-label">Quote date</label>
             <input
@@ -401,13 +408,16 @@ export default function QuoteBuilder() {
         {/* ---- Accessories ---- */}
         <section className="qb-section">
           <h2 className="qb-section-title">Fittings &amp; Accessories</h2>
-          <input
-            type="text"
-            placeholder="e.g. Cutlery Basket, Oil Pull-Out, Tandem Box"
-            value={accessoriesDescription}
-            onChange={(e) => setAccessoriesDescription(e.target.value)}
-            className="qb-input"
-          />
+          <div className="qb-input-row">
+            <input
+              type="text"
+              placeholder="e.g. Cutlery Basket, Oil Pull-Out, Tandem Box"
+              value={accessoriesDescription}
+              onChange={(e) => setAccessoriesDescription(e.target.value)}
+              className="qb-input"
+            />
+            <VoiceButton onResult={(text) => setAccessoriesDescription(text.trim())} label="Say accessories" />
+          </div>
           <input
             type="number"
             inputMode="decimal"
@@ -579,6 +589,18 @@ export default function QuoteBuilder() {
           border-color: var(--slate);
         }
         .qb-input:last-child { margin-bottom: 0; }
+        .qb-input-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 10px;
+        }
+        .qb-input-row:last-child { margin-bottom: 0; }
+        .qb-input-row .qb-input {
+          flex: 1;
+          min-width: 0;
+          margin-bottom: 0;
+        }
         .qb-textarea {
           resize: vertical;
           font-family: inherit;

@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { api } from '../api/client'
+import VoiceButton from './VoiceButton'
+import { parseDimensions, parseNumber } from '../utils/voice'
 
 // "Wardrobe Framed (7X4)" -> { base: "Wardrobe Framed", length: "7", width: "4" }
 export function parseDescription(desc) {
@@ -28,6 +30,7 @@ export function computeQuantity(unit, length, width, currentQuantity) {
 export default function ItemRow({ item, onChange, onRemove }) {
   const [suggestions, setSuggestions] = useState([])
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [dimHint, setDimHint] = useState(null)
   const debounceRef = useRef(null)
 
   const amount = (parseFloat(item.quantity) || 0) * (parseFloat(item.rate) || 0)
@@ -72,6 +75,33 @@ export default function ItemRow({ item, onChange, onRemove }) {
     patch({ width: value, quantity })
   }
 
+  function handleVoiceBase(transcript) {
+    handleBaseChange(transcript.trim())
+  }
+
+  // A single voice button covers both L and W at once - "24 by 54" fills both fields together,
+  // avoiding the need for two separate mic taps for one measurement.
+  function handleVoiceDimensions(transcript) {
+    const parsed = parseDimensions(transcript)
+    if (!parsed) {
+      setDimHint("Try saying \"7 by 3\"")
+      setTimeout(() => setDimHint(null), 2500)
+      return
+    }
+    const quantity = computeQuantity(item.unit, parsed.length, parsed.width, item.quantity)
+    patch({ length: parsed.length, width: parsed.width, quantity })
+  }
+
+  function handleVoiceRate(transcript) {
+    const num = parseNumber(transcript)
+    if (num) patch({ rate: num })
+  }
+
+  function handleVoiceQuantity(transcript) {
+    const num = parseNumber(transcript)
+    if (num) patch({ quantity: num })
+  }
+
   useEffect(() => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -109,6 +139,7 @@ export default function ItemRow({ item, onChange, onRemove }) {
             </div>
           )}
         </div>
+        <VoiceButton onResult={handleVoiceBase} label="Say item description" />
         <button type="button" className="item-remove" onClick={onRemove} aria-label="Remove item">
           ×
         </button>
@@ -152,21 +183,29 @@ export default function ItemRow({ item, onChange, onRemove }) {
               onChange={(e) => handleWidthChange(e.target.value)}
               className="item-input item-dim-input no-spinner"
             />
-            <span className="item-dims-label mono">
-              = {item.quantity || 0} sqft
-            </span>
+            <VoiceButton onResult={handleVoiceDimensions} label="Say dimensions, e.g. 7 by 3" />
           </div>
         ) : (
-          <input
-            type="number"
-            inputMode="decimal"
-            placeholder="Quantity"
-            value={item.quantity}
-            onChange={(e) => patch({ quantity: e.target.value })}
-            className="item-input item-qty-input no-spinner"
-          />
+          <div className="item-qty-wrap">
+            <input
+              type="number"
+              inputMode="decimal"
+              placeholder="Quantity"
+              value={item.quantity}
+              onChange={(e) => patch({ quantity: e.target.value })}
+              className="item-input item-qty-input no-spinner"
+            />
+            <VoiceButton onResult={handleVoiceQuantity} label="Say quantity" />
+          </div>
         )}
       </div>
+
+      {item.unit === 'SQFT' && (
+        <div className="item-dims-summary">
+          <span className="mono">= {item.quantity || 0} sqft</span>
+          {dimHint && <span className="item-dim-hint">{dimHint}</span>}
+        </div>
+      )}
 
       {/* Row 3: rate - given its own full-width row so the number is always fully legible */}
       <div className="item-row-rate">
@@ -179,6 +218,7 @@ export default function ItemRow({ item, onChange, onRemove }) {
           onChange={(e) => patch({ rate: e.target.value })}
           className="item-input item-rate-input no-spinner"
         />
+        <VoiceButton onResult={handleVoiceRate} label="Say rate" />
       </div>
 
       <div className="item-row-bottom">
@@ -201,11 +241,12 @@ export default function ItemRow({ item, onChange, onRemove }) {
         .item-row-top {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 6px;
         }
         .item-desc-wrap {
           flex: 1;
           position: relative;
+          min-width: 0;
         }
         .item-input {
           width: 100%;
@@ -311,21 +352,33 @@ export default function ItemRow({ item, onChange, onRemove }) {
           font-size: 12px;
           flex-shrink: 0;
         }
-        .item-dims-label {
-          font-size: 11.5px;
-          color: var(--ink-soft);
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
+        .item-qty-wrap {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
         }
         .item-qty-input {
           flex: 1;
+        }
+        .item-dims-summary {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-top: 6px;
+          font-size: 11.5px;
+          color: var(--ink-soft);
+        }
+        .item-dim-hint {
+          color: var(--brick);
+          font-weight: 500;
         }
 
         .item-row-rate {
           display: flex;
           align-items: center;
-          gap: 10px;
+          gap: 8px;
           margin-top: 8px;
         }
         .item-rate-label {
@@ -337,6 +390,7 @@ export default function ItemRow({ item, onChange, onRemove }) {
         .item-rate-input {
           flex: 1;
           font-weight: 600;
+          min-width: 0;
         }
 
         .item-row-bottom {
