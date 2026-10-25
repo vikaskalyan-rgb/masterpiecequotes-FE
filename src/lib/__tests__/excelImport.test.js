@@ -250,3 +250,66 @@ describe('real production quote replayed through the importer', () => {
     expect(c.warnings.filter((w) => w.includes('works out'))).toEqual([])
   })
 })
+
+describe("the owner's layout: numbered sections, TOTAL in the Unit column, total above the table", () => {
+  // Same layout as the owner's real sheets; customer and items are made up.
+  const sheet = [
+    ['Masterpiece:'],
+    ['16/10, Gopalakrishnan Street, Off Cart Track Road, Guindy,\nChennai - 600032.\n9994445388 / 7304420600', null, null, null, 'DATE : 05.10.2026'],
+    ['Quotation to :'],
+    ['Mr. Ramesh, Flat No:12, Lake View Apartments,\nAdyar, Chennai.', null, null, 'Total : 120000'],
+    [],
+    ['Sl.no', 'Description', 'Quantity', 'Unit', ' Ra te', 'Amount'],
+    [1, 'A. Living Room'],
+    [null, 'TV Panelling  (4X4.5)', 18, 'Sqft', 750, 13500],
+    [2, 'KITCHEN'],
+    [null, 'Bottom Unit (2.5X5) Box Drawer ', 12.5, 'Sqft', 1400, 17500],
+    [null, 'Wall Mount Box (2.25X10.5)', 24, 'Sqft', 1350, 32400],
+    [3, 'BEDROOM II'],
+    [null, 'Wardrobe Box (5.25X7)', 37, 'Sqft', 1350, 49950],
+    [4, 'F.Accessories'],
+    [null, 'Cutlery, Plate Basket, Oil Pull Out', null, null, '-', 14000],
+    [5, 'G. Additional Work (05.10.2026)'],
+    [null, 'Loft Extn (6X2.5)', 15, 'Sqft', 900, 13500],
+    [null, null, null, 'TOTAL', null, 140850],
+    [null, null, null, 'Less: Discount', null, 20850],
+    [null, null, null, 'FINAL TOTAL', null, 120000],
+    [],
+    ['Material Specification.'],
+    ['S.no', 'Description', 'Specifications', 'Brand'],
+    [1, 'Plywood- Kitchen base', 'BWP 710 Grade', 'GAMA Hardwood'],
+    [2, 'Accessories', 'Zinc', 'Sleek/Ebco'],
+    ['T erms&conditions.'],
+    [1, ' This quote is Exclusive of GST. 18% Extra if Bills required'],
+    [2, ' 50% payment along with your confirmed work order'],
+  ]
+  const c = only(parseWorkbook([{ sheet: 'Ramesh Quote', data: sheet }], BUSINESS))
+
+  it('reads the customer under "Quotation to", the date and the total above the table', () => {
+    expect(c.patch).toMatchObject({
+      customerName: 'Mr. Ramesh',
+      customerAddress: 'Flat No:12, Lake View Apartments, Adyar, Chennai.',
+      quoteDate: '2026-10-05',
+      sheetTotal: 120000,
+    })
+  })
+
+  it('reads numbered and lettered sections as rooms, and Accessories as the fittings', () => {
+    expect(c.patch.rooms.map((r) => r.name)).toEqual(['Living Room', 'Kitchen', 'Bedroom II', 'Additional Work (05.10.2026)'])
+    expect(c.patch).toMatchObject({ accessoriesDescription: 'Cutlery, Plate Basket, Oil Pull Out', accessoriesAmount: '14000' })
+  })
+
+  it('finds the " Ra te" column and sizes inside descriptions, keeping every amount', () => {
+    const items = c.patch.rooms.flatMap((r) => r.items)
+    expect(items.map((i) => i.rate)).toEqual(['750', '1400', '1350', '1350', '900'])
+    expect(items[1]).toMatchObject({ description: 'Bottom Unit Box Drawer', length: '2.5', width: '5', areaAdjusted: false })
+    expect(items[2]).toMatchObject({ description: 'Wall Mount Box', areaAdjusted: true, quantity: '24' })
+    expect(items.map(itemAmount)).toEqual([13500, 17500, 32400, 49950, 13500])
+    expect(subtotalOf(c.patch.rooms, c.patch.accessoriesAmount)).toBe(140850)
+  })
+
+  it('never turns the TOTAL rows, the material spec or the terms into items', () => {
+    expect(c.stats).toEqual({ rooms: 4, items: 5 })
+    expect(c.warnings).toEqual(['No customer phone found: add it'])
+  })
+})
