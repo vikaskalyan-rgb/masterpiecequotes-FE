@@ -67,7 +67,7 @@ describe('save payload', () => {
     expect(p.version).toBe(3)
     expect(p.totalOverridden).toBe(true)
     expect(p.roundedTotal).toBe(44000)
-    expect(p.rooms[0].items[0]).toEqual({ description: 'Base', unit: 'SQFT', length: 7, width: 4, quantity: null, rate: 1500 })
+    expect(p.rooms[0].items[0]).toEqual({ description: 'Base', unit: 'SQFT', length: 7, width: 4, quantity: null, rate: 1500, areaAdjusted: false })
   })
 
   it('omits the total when it is automatic', () => {
@@ -101,5 +101,53 @@ describe('voice dimensions', () => {
     expect(parseDimensions('7 cross 3')).toEqual({ length: '7', width: '3' })
     expect(parseDimensions('7 / 2.5')).toEqual({ length: '7', width: '2.5' })
     expect(parseDimensions('seven')).toBeNull()
+  })
+})
+
+describe('sqft items entered as a total area (real production data)', () => {
+  const quote = {
+    ...savedQuote,
+    rooms: [{ name: 'Balcony', items: [{ description: 'Utility box (2X2)(1X7)', unit: 'SQFT', length: null, width: null, quantity: 11, rate: 1000 }] }],
+  }
+
+  it('opens in area mode and keeps the area', () => {
+    const item = formFromQuote(quote).rooms[0].items[0]
+    expect(item.areaAdjusted).toBe(true)
+    expect(item.quantity).toBe('11')
+  })
+
+  it('validates and saves the typed area instead of demanding dimensions', () => {
+    const f = formFromQuote(quote)
+    expect(validateForm(f).firstError).toBeNull()
+    expect(buildPayload(f).rooms[0].items[0]).toEqual({ description: 'Utility box (2X2)(1X7)', unit: 'SQFT', length: null, width: null, quantity: 11, rate: 1000, areaAdjusted: true })
+  })
+
+  it('asks for the area when area mode is empty', () => {
+    const f = formFromQuote(quote)
+    f.rooms[0].items[0].quantity = ''
+    expect(validateForm(f).errors['rooms.0.items.0.quantity']).toBe('Add the billed area')
+  })
+})
+
+describe('billed area differing from length x width (real production data)', () => {
+  const quote = {
+    ...savedQuote,
+    rooms: [{ name: 'Foyer', items: [
+      { description: 'Foyer Box', unit: 'SQFT', length: 2.5, width: 5.5, quantity: 14, rate: 1250 },
+      { description: 'Bathroom Storage Box (1.5X1.5) 2 Nos', unit: 'SQFT', length: 1.5, width: 1.5, quantity: 4.5, rate: 1250 },
+      { description: 'Side Panel', unit: 'SQFT', length: 1.5, width: 7, quantity: 10.5, rate: 800 },
+    ] }],
+  }
+
+  it('detects hand-set areas and leaves exact ones automatic', () => {
+    const items = formFromQuote(quote).rooms[0].items
+    expect(items.map((i) => i.areaAdjusted)).toEqual([true, true, false])
+  })
+
+  it('saves every line with exactly the area and amount it had', () => {
+    const items = buildPayload(formFromQuote(quote)).rooms[0].items
+    expect(items[0]).toMatchObject({ length: 2.5, width: 5.5, quantity: 14, areaAdjusted: true })
+    expect(items[1]).toMatchObject({ length: 1.5, width: 1.5, quantity: 4.5, areaAdjusted: true })
+    expect(items[2]).toMatchObject({ length: 1.5, width: 7, quantity: null, areaAdjusted: false })
   })
 })

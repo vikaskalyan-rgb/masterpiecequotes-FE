@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { api } from '../api/client'
-import { itemAmount, itemQuantity, formatNumber, formatRupees } from '../lib/money'
+import { dimensionArea, hasDimensions, itemAmount, itemQuantity, formatNumber, formatRupees } from '../lib/money'
 import { parseDimensions, parseNumber } from '../lib/voice'
 import Icon from './Icon'
 import SuggestInput from './SuggestInput'
@@ -14,11 +14,18 @@ export default function ItemEditor({ item, errors, idPrefix, onChange, onRemove 
   const quantity = itemQuantity(item)
   const amount = itemAmount(item)
 
-  // Switching to "Nos" starts the count at 1, instead of silently reusing the area as a count.
+  // Switching to "Nos" starts the count at 1, never reusing an area as a count.
   function setUnit(unit) {
     if (unit === item.unit) return
-    patch(unit === 'NOS' ? { unit, quantity: item.quantity || '1' } : { unit })
+    patch(unit === 'NOS' ? { unit, areaAdjusted: false, quantity: '1' } : { unit, areaAdjusted: false, quantity: '' })
   }
+
+  // The billed area can differ from length x width: rounded to whole sqft, several pieces of the
+  // same size, or an odd shape measured in parts ("(2X2)(1X7)").
+  function setAdjusted(areaAdjusted) {
+    patch(areaAdjusted ? { areaAdjusted, quantity: quantity > 0 ? String(quantity) : '' } : { areaAdjusted, quantity: '' })
+  }
+  const lxw = dimensionArea(item)
 
   function voiceDimensions(transcript) {
     const parsed = parseDimensions(transcript)
@@ -53,7 +60,7 @@ export default function ItemEditor({ item, errors, idPrefix, onChange, onRemove 
               <span className={css.suggestionUnit}>{s.unit === 'SQFT' ? 'sqft' : 'nos'}</span>
             </span>
           )}
-          onPick={(s) => patch({ description: s.description, unit: s.unit, quantity: s.unit === 'NOS' ? item.quantity || '1' : item.quantity })}
+          onPick={(s) => patch(s.unit === item.unit ? { description: s.description } : { description: s.description, unit: s.unit, areaAdjusted: false, quantity: s.unit === 'NOS' ? '1' : '' })}
           aria-invalid={Boolean(err('description'))}
           data-error-path={`${idPrefix}.description`}
         />
@@ -124,11 +131,40 @@ export default function ItemEditor({ item, errors, idPrefix, onChange, onRemove 
             <div className={css.dimLine} aria-live="polite">
               <span className={css.tick} aria-hidden="true" />
               <span className={css.rule} aria-hidden="true" />
-              <span className={css.dimValue}>{quantity > 0 ? `${formatNumber(quantity)} sqft` : 'area'}</span>
+              <span className={css.dimValue}>{lxw > 0 ? `${formatNumber(lxw)} sqft` : 'area'}</span>
               <span className={css.rule} aria-hidden="true" />
               <span className={css.tick} aria-hidden="true" />
             </div>
             {dimHint && <p className="field__hint">{dimHint}</p>}
+            {item.areaAdjusted ? (
+              <div className={css.billed}>
+                <label className={css.dimBox}>
+                  <span className={css.billedLabel}>Billed area</span>
+                  <input
+                    className={`input ${css.dimInput} num`}
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    placeholder="Area"
+                    value={item.quantity}
+                    onChange={(e) => patch({ quantity: e.target.value })}
+                    aria-invalid={Boolean(err('quantity'))}
+                    data-error-path={`${idPrefix}.quantity`}
+                  />
+                  <span className={css.suffix}>sqft</span>
+                </label>
+                {hasDimensions(item) && (
+                  <button type="button" className={css.modeLink} onClick={() => setAdjusted(false)}>
+                    Use {formatNumber(lxw)} sqft
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button type="button" className={css.modeLink} onClick={() => setAdjusted(true)}>
+                Bill a different area (rounding, pieces, odd shape)
+              </button>
+            )}
           </div>
         ) : (
           <div className={css.dimInputs}>

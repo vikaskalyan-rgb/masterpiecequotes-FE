@@ -10,13 +10,19 @@ function round2(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100
 }
 
+// SQFT: length x width, unless the billed area was adjusted (rounded to whole sqft, several
+// pieces, odd shapes: all found in real quotes); then the typed area. NOS: the count.
+// Mirrors Totals.quantity on the server.
+export function hasDimensions(item) {
+  return item.unit === 'SQFT' && Number.isFinite(parseFloat(item.length)) && Number.isFinite(parseFloat(item.width))
+}
+
+export function dimensionArea(item) {
+  return hasDimensions(item) ? round2(parseFloat(item.length) * parseFloat(item.width)) : 0
+}
+
 export function itemQuantity(item) {
-  if (item.unit === 'SQFT') {
-    const l = parseFloat(item.length)
-    const w = parseFloat(item.width)
-    if (!Number.isFinite(l) || !Number.isFinite(w)) return 0
-    return round2(l * w)
-  }
+  if (item.unit === 'SQFT' && !item.areaAdjusted) return dimensionArea(item)
   return round2(parseFloat(item.quantity) || 0)
 }
 
