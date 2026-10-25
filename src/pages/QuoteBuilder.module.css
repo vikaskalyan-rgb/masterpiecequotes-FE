@@ -316,3 +316,154 @@
     grid-row: auto;
   }
 }
+
+/* ---------- imported from Excel: what was read, and what to check ---------- */
+.imported {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--teal);
+  border-radius: var(--r-panel);
+  background: var(--surface);
+}
+
+.importedHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.importedIcon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-control);
+  background: var(--well);
+  color: var(--teal);
+}
+
+.importedText {
+  min-width: 0;
+}
+
+.importedTitle {
+  overflow: hidden;
+  font-size: var(--text-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importedMeta {
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+
+.importedLead {
+  margin-top: var(--space-3);
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.checks {
+  margin-top: var(--space-3);
+  border-radius: var(--r-control);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: var(--text-sm);
+}
+
+.checks summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.checks summary::-webkit-details-marker {
+  display: none;
+}
+
+.checksIcon {
+  margin-left: auto;
+  transition: transform 160ms ease;
+}
+
+.checks[open] .checksIcon {
+  transform: rotate(180deg);
+}
+
+.checks ul {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-3) calc(var(--space-3) + 1.1em);
+  color: var(--ink);
+}
+
+.discardImport {
+  margin-top: var(--space-2);
+  margin-left: calc(-1 * var(--space-3));
+  color: var(--ink-2);
+}
+
+/* ---------- confirm before saving an import ---------- */
+.confirmLead {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.confirmList {
+  display: grid;
+  margin: var(--space-4) 0 0;
+}
+
+.confirmList > div {
+  display: grid;
+  grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.confirmList dt {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.confirmList dd {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.confirmList dd span {
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+
+.confirmTotal {
+  border-bottom: 0 !important;
+}
+
+.confirmTotal dd {
+  font-size: var(--text-xl);
+  font-variation-settings: var(--wide);
+  font-weight: 700;
+}
+
+.confirmActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}

@@ -2,6 +2,7 @@
 // building the save payload. Kept free of React so they can be unit tested.
 import { addDays, todayIso } from './dates'
 import { newId } from './ids'
+import { subtotalOf, suggestedTotal } from './money'
 import { formatPhone, normalizePhone } from './phone'
 
 export const ROOM_COLORS = ['var(--room-1)', 'var(--room-2)', 'var(--room-3)', 'var(--room-4)']
@@ -90,6 +91,37 @@ export function formForDuplicate(q, business, today = todayIso()) {
     totalOverridden: false,
     roundedTotal: '',
   }
+}
+
+// A quote read from a spreadsheet (lib/excelImport) becomes a new quote with the usual material
+// spec and terms. The sheet's final total is kept as a typed total only when it isn't what the
+// usual rounding would give anyway, so an agreed price survives the import.
+export function formForImport(patch, defaults, business, today = todayIso()) {
+  const base = formForNewQuote(defaults, business, today)
+  const quoteDate = patch.quoteDate || today
+  const rooms = (patch.rooms || [])
+    .filter((r) => r.items?.length)
+    .map((r) => ({ key: newId(), name: r.name || '', items: r.items.map((it) => ({ ...emptyItem(), ...it, key: newId() })) }))
+  const form = {
+    ...base,
+    customerName: patch.customerName || '',
+    customerPhone: patch.customerPhone || '',
+    customerAddress: patch.customerAddress || '',
+    quoteDate,
+    validUntil: addDays(quoteDate, business?.validityDays ?? 30),
+    rooms: rooms.length ? rooms : [emptyRoom()],
+    accessoriesDescription: patch.accessoriesDescription || '',
+    accessoriesAmount: patch.accessoriesAmount || '',
+  }
+  const sheetTotal = Number(patch.sheetTotal)
+  if (patch.sheetTotal != null && Number.isFinite(sheetTotal) && sheetTotal > 0) {
+    const usual = suggestedTotal(subtotalOf(form.rooms, form.accessoriesAmount), business?.roundingMode, business?.roundingStep)
+    if (Math.abs(usual - sheetTotal) > 0.005) {
+      form.totalOverridden = true
+      form.roundedTotal = String(sheetTotal)
+    }
+  }
+  return form
 }
 
 const isBlankItem = (it) => !it.description.trim() && !it.length && !it.width && !it.quantity && !it.rate

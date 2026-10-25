@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { draftCustomerName, draftStatus } from '../drafts'
-import { buildPayload, fingerprint, formForDuplicate, formForNewQuote, formFromQuote, validateForm } from '../quoteForm'
+import { buildPayload, fingerprint, formForDuplicate, formForImport, formForNewQuote, formFromQuote, validateForm } from '../quoteForm'
+import { parseWorkbook } from '../excelImport'
 import { parseDimensions } from '../voice'
 
 const savedQuote = {
@@ -149,5 +150,48 @@ describe('billed area differing from length x width (real production data)', () 
     expect(items[0]).toMatchObject({ length: 2.5, width: 5.5, quantity: 14, areaAdjusted: true })
     expect(items[1]).toMatchObject({ length: 1.5, width: 1.5, quantity: 4.5, areaAdjusted: true })
     expect(items[2]).toMatchObject({ length: 1.5, width: 7, quantity: null, areaAdjusted: false })
+  })
+})
+
+describe('an imported sheet as a new quote', () => {
+  const business = { validityDays: 30, roundingMode: 'NEAREST', roundingStep: 1000 }
+  const defaults = { materialSpecItems: [{ itemLabel: 'Plywood', detail: 'BWP', brand: 'GAMA' }], termItems: [{ text: '50% advance' }] }
+  const sheet = (total) => [
+    ['Customer name', 'Ravi Kumar'],
+    ['WhatsApp number', '98400 12345'],
+    ['Quote date', '25/10/2026'],
+    ...(total ? [['Final total', total]] : []),
+    [],
+    ['Room', 'Item', 'Unit', 'Length', 'Width', 'Billed area / quantity', 'Rate'],
+    ['Kitchen', 'Base cabinets', 'SQFT', 7, 2.5, null, 1250],
+    [null, 'Tall unit', 'SQFT', 2, 7, 15, 1250],
+    ['Bedroom', 'Mirror', 'NOS', null, null, 1, 3500],
+  ]
+  const formFor = (total) => formForImport(parseWorkbook([{ sheet: 'Quote', data: sheet(total) }])[0].patch, defaults, business, '2026-10-26')
+
+  it('fills the customer, rooms and items, with the usual spec and terms', () => {
+    const form = formFor()
+    expect(form).toMatchObject({ customerName: 'Ravi Kumar', customerPhone: '+91 98400 12345', quoteDate: '2026-10-25', validUntil: '2026-11-24' })
+    expect(form.rooms.map((r) => [r.name, r.items.length])).toEqual([['Kitchen', 2], ['Bedroom', 1]])
+    expect(form.rooms.every((r) => r.key && r.items.every((it) => it.key))).toBe(true)
+    expect(form.materialSpecItems[0].itemLabel).toBe('Plywood')
+    expect(form.termItems[0].text).toBe('50% advance')
+    expect(validateForm(form).firstError).toBeNull()
+  })
+
+  it('saves exactly what the sheet said', () => {
+    const payload = buildPayload(formFor(), {})
+    expect(payload.rooms[0].items).toEqual([
+      { description: 'Base cabinets', unit: 'SQFT', length: 7, width: 2.5, quantity: null, rate: 1250, areaAdjusted: false },
+      { description: 'Tall unit', unit: 'SQFT', length: 2, width: 7, quantity: 15, rate: 1250, areaAdjusted: true },
+    ])
+    expect(payload.rooms[1].items[0]).toMatchObject({ unit: 'NOS', quantity: 1, rate: 3500 })
+  })
+
+  it('keeps an agreed total, but not one the usual rounding gives anyway', () => {
+    // items: 21,875 + 18,750 + 3,500 = 44,125 -> usual total 44,000
+    expect(formFor(40000)).toMatchObject({ totalOverridden: true, roundedTotal: '40000' })
+    expect(formFor(44000)).toMatchObject({ totalOverridden: false, roundedTotal: '' })
+    expect(formFor()).toMatchObject({ totalOverridden: false })
   })
 })

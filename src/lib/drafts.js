@@ -2,15 +2,18 @@
 // phone never loses a quote in progress. Cleared the moment a save succeeds.
 //
 // Keys are per builder session, so a new quote and an edit in another tab never clobber:
-//   quote-draft:new | quote-draft:duplicate:<fromId> | quote-draft:edit:<id>
+//   quote-draft:new | quote-draft:duplicate:<fromId> | quote-draft:edit:<id> | quote-draft:import:<importId>
+// An import starts as { importPatch, importInfo } (what was read from the file) and becomes an
+// ordinary draft ({ form, ... }) the first time the builder opens it.
 // Each draft records the server version it started from (baseVersion): if the quote has been
 // saved elsewhere since, restoring it is a conflict the user resolves, never a silent overwrite.
 
 const PREFIX = 'quote-draft:'
 
-export function draftKeyFor({ id, duplicateFromId }) {
+export function draftKeyFor({ id, duplicateFromId, importId }) {
   if (id) return `${PREFIX}edit:${id}`
   if (duplicateFromId) return `${PREFIX}duplicate:${duplicateFromId}`
+  if (importId) return `${PREFIX}import:${importId}`
   return `${PREFIX}new`
 }
 
@@ -19,6 +22,7 @@ export function parseDraftKey(key) {
   if (rest === 'new') return { type: 'new' }
   if (rest.startsWith('edit:')) return { type: 'edit', id: rest.slice(5) }
   if (rest.startsWith('duplicate:')) return { type: 'duplicate', fromId: rest.slice(10) }
+  if (rest.startsWith('import:')) return { type: 'import', importId: rest.slice(7) }
   return { type: 'unknown' }
 }
 
@@ -82,5 +86,6 @@ export function draftStatus(draft, serverVersion) {
 
 // Name shown for an unsaved quote on the home screen (drafts store the whole builder form).
 export function draftCustomerName(draft) {
-  return draft?.data?.form?.customerName?.trim() || ''
+  const data = draft?.data
+  return (data?.form?.customerName ?? data?.importPatch?.customerName ?? '').trim()
 }
