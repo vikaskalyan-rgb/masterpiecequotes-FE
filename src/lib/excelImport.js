@@ -71,14 +71,18 @@ export function parseSize(v) {
   return length > 0 && width > 0 ? { length, width } : null
 }
 
-// "Wardrobe (7x4)" or "Wardrobe - 7 x 4" -> description "Wardrobe" + size. Only when something is left.
+// "Wardrobe (7x4)", "Bottom Unit (2.5X5) Box Drawer" or "Wardrobe - 7 x 4" -> the description
+// without the size, plus the size. Only when some description is left.
 export function splitDescriptionSize(description) {
-  const bracketed = /\s*[([]\s*([^()[\]]+?)\s*[)\]]\s*$/.exec(description)
-  const trailing = /\s*[-–:,]?\s*(\d[\d.'"’”′″ ]*\s*(?:x|×|\*)\s*\d[\d.'"’”′″ ]*)$/i.exec(description)
-  for (const m of [bracketed, trailing]) {
-    if (!m) continue
+  for (const m of description.matchAll(/\s*[([]\s*([^()[\]]+?)\s*[)\]]/g)) {
     const size = parseSize(m[1])
-    const rest = description.slice(0, m.index).trim()
+    const rest = `${description.slice(0, m.index)} ${description.slice(m.index + m[0].length)}`.replace(/\s+/g, ' ').trim()
+    if (size && rest) return { description: rest, size }
+  }
+  const trailing = /\s*[-–:,]?\s*(\d[\d.'"’”′″ ]*\s*(?:x|×|\*)\s*\d[\d.'"’”′″ ]*)$/i.exec(description)
+  if (trailing) {
+    const size = parseSize(trailing[1])
+    const rest = description.slice(0, trailing.index).trim()
     if (size && rest) return { description: rest, size }
   }
   return { description, size: null }
@@ -150,7 +154,8 @@ function classifyHeader(row) {
     if (typeof cell !== 'string') return
     const h = normHeader(cell)
     if (!h || h.length > 40) return
-    const rule = HEADER_RULES.find(([, re]) => re.test(h))
+    // Typed headings have stray spaces (" Ra te"): try the words, then the letters run together.
+    const rule = HEADER_RULES.find(([, re]) => re.test(h)) || HEADER_RULES.find(([, re]) => re.test(h.replace(/\s+/g, '')))
     if (!rule) return
     const kind = rule[0]
     if (kind === 'dim') {
@@ -188,8 +193,18 @@ const DETAIL_RULES = [
   ['total', /^((final|grand|net) total|total amount|quote total|total)$/],
   ['fittings', /(fitting|accessor)/],
   ['address', /(address|^site$|^location$)/],
-  ['name', /^((customer|client|party)( name)?|name|to)$/],
+  ['name', /^((customer|client|party)( name)?|name|to|(quotation|quote|bill|billed) to)$/],
 ]
+
+const HONORIFIC = /^(mr|mrs|ms|miss|dr|shri|sri|smt|thiru|tmt|selvi)\b\.?/i
+
+// "Mr. Samuel, Flat No:911, Kendriya Vihar, Avadi" -> name + address. Without a title such as
+// Mr./Mrs./Dr. in front, the whole text is taken as the address.
+export function splitNameAddress(text) {
+  const parts = cellText(text).split(/\s*,\s*/).filter(Boolean)
+  if (parts.length && HONORIFIC.test(parts[0])) return { name: parts[0], address: parts.slice(1).join(', ') }
+  return { name: '', address: parts.join(', ') }
+}
 
 const squash = (t) => cellText(t).toLowerCase().replace(/[^a-z0-9]/g, '')
 
@@ -223,8 +238,9 @@ function readDetails(rows, endRow, ignorePhones, ignoreText) {
       } else {
         if (t.length > 30) continue
         const j = row.findIndex((c, k) => k > i && !isEmptyCell(c))
-        if (j === -1) continue
-        value = row[j]
+        if (j !== -1) value = row[j]
+        else if (/:\s*$/.test(t) && r + 1 < endRow && !isEmptyCell(rows[r + 1]?.[i])) value = rows[r + 1][i] // label above its value
+        else continue
       }
       const rule = DETAIL_RULES.find(([, re]) => re.test(labelOf(label)))
       if (!rule) continue
@@ -243,6 +259,12 @@ function readDetails(rows, endRow, ignorePhones, ignoreText) {
         if (n !== null) {
           if (out.fittingsAmount === undefined) out.fittingsAmount = n
         } else if (!out.fittingsDescription && cellText(value)) out.fittingsDescription = cellText(value)
+      } else if (kind === 'name' && /(to)$/.test(labelOf(label)) && cellText(value).includes(',')) {
+        // "Quotation to": usually the name and the address together.
+        if (isOwn(value)) continue
+        const { name, address } = splitNameAddress(value)
+        if (name && !out.name) out.name = name
+        if (address && !out.address) out.address = address
       } else if (!out[kind] && cellText(value) && parseNumber(value) === null && !isOwn(value)) {
         out[kind] = cellText(value)
       }
@@ -274,9 +296,16 @@ const ROOM_WORDS =
   /(kitchen|bed ?room|living|hall|dining|pooja|puja|bath|toilet|foyer|study|kid|master|guest|room|balcony|utility|lobby|office|cabin|reception|entrance|passage|staircase|terrace|store|lounge)/i
 
 function cleanRoomName(name) {
-  let n = name.replace(/^(\d{1,2}|[A-Za-z]|[ivxIVX]{1,4})[.)]\s+/, '').replace(/[:\-–]+$/, '').trim()
+  let n = name
+    .replace(/^(\d{1,2}|[ivxIVX]{1,4})[.)]\s+/, '')
+    .replace(/^[A-Za-z][.)]\s*(?=[A-Za-z]{2})/, '') // "A. Living Room", "F.Accessories"
+    .replace(/[:\-–]+$/, '')
+    .trim()
   if (n.length > 3 && n === n.toUpperCase() && /[A-Z]/.test(n)) {
-    n = n.toLowerCase().replace(/(^|[\s(/-])([a-z])/g, (_, p, c) => p + c.toUpperCase())
+    n = n
+      .toLowerCase()
+      .replace(/(^|[\s(/-])([a-z])/g, (_, p, c) => p + c.toUpperCase())
+      .replace(/\b(i{1,3}|iv|vi{1,3}|ix)\b/gi, (m) => m.toUpperCase()) // Bedroom II, not Bedroom Ii
   }
   return n.slice(0, 100)
 }
@@ -418,28 +447,38 @@ function parseTable(rows, header, opts) {
       .map((c, i) => (numericCols.has(i) || nonLabelCols.has(i) ? '' : cellText(c)))
       .filter((t) => t && parseNumber(t) === null)
     const label = description || texts[0] || ''
+    // Totals and discounts are often typed in whichever column is free, the Unit column included.
+    const rowLabel =
+      label ||
+      row
+        .map((c, i) => (numericCols.has(i) ? '' : cellText(c)))
+        .find((t) => t && parseNumber(t) === null && (TOTAL_ROW.test(t) || TAX_ROW.test(t) || DISCOUNT_ROW.test(t))) ||
+      ''
     const anyNumber = ['length', 'width', 'quantity', 'rate', 'amount'].some((k) => values[k] !== null) || values.size
     const lastNumber = [...row].reverse().map(parseNumber).find((n) => n !== null)
 
-    if (label && TAX_ROW.test(label) && !values.rate) {
-      if (!g.taxSeen) g.notes.push(`Skipped "${label}": quotes are written without GST`)
+    // A GST row carries an amount; "This quote is exclusive of GST" in the terms is just text.
+    if (rowLabel && TAX_ROW.test(rowLabel) && !values.rate && values.amount != null) {
+      if (!g.taxSeen) g.notes.push(`Skipped "${rowLabel}": quotes are written without GST`)
       g.taxSeen = true
       continue
     }
-    if (label && DISCOUNT_ROW.test(label) && !values.rate && lastNumber != null) {
+    if (rowLabel && DISCOUNT_ROW.test(rowLabel) && !values.rate && lastNumber != null) {
       g.discount += Math.abs(lastNumber)
       continue
     }
-    if (label && TOTAL_ROW.test(label) && !values.rate) {
+    if (rowLabel && TOTAL_ROW.test(rowLabel) && !values.rate) {
       const value = values.amount ?? lastNumber
-      if (value != null && GRAND_TOTAL.test(label) && !g.taxSeen) g.grandTotal = value
+      if (value != null && GRAND_TOTAL.test(rowLabel) && !g.taxSeen) g.grandTotal = value
       continue
     }
 
     if (!anyNumber) {
       // A name on its own line starts a room, unless the sheet has a Room column.
       const serial = cols.serial !== undefined && !isEmptyCell(at(row, 'serial'))
-      const looksLikeRoom = label.length <= 60 && (ROOM_WORDS.test(label) || label === label.toUpperCase() || /:$/.test(label) || !serial)
+      const lettered = /^[A-Za-z][.)]\s*[A-Za-z]{2}/.test(label) // "F.Accessories", "G. Additional Work"
+      const looksLikeRoom =
+        label.length <= 60 && (ROOM_WORDS.test(label) || label === label.toUpperCase() || /:$/.test(label) || lettered || !serial)
       if (cols.room === undefined && label && looksLikeRoom) g.pendingHeading = cleanRoomName(label)
       else if (roomCell && !label) lastRoom = roomCell
       // Reported only if more items follow: text after the table (terms, notes) is not an item.
@@ -447,7 +486,8 @@ function parseTable(rows, header, opts) {
       continue
     }
 
-    if ((FITTINGS_ROW.test(label) || FITTINGS_ROW.test(roomCell)) && values.rate == null && values.quantity == null && values.length == null && !values.size && values.amount != null) {
+    const heading = g.pendingHeading ?? (cols.room === undefined ? g.current?.name : '') ?? ''
+    if ((FITTINGS_ROW.test(label) || FITTINGS_ROW.test(roomCell) || FITTINGS_ROW.test(heading)) && values.rate == null && values.quantity == null && values.length == null && !values.size && values.amount != null) {
       if (label) g.fittings.descriptions.push(label)
       g.fittings.amount += values.amount
       continue
@@ -520,7 +560,7 @@ function toCandidate(g, sheetName, details, multi) {
       ? ''
       : details.fittingsDescription || ''
 
-  let sheetTotal = g.grandTotal ?? (multi ? null : details.total ?? null)
+  let sheetTotal = multi ? g.grandTotal : (details.total ?? g.grandTotal ?? null)
   if (sheetTotal == null && g.discount > 0) {
     const items = rooms.reduce((s, r) => s + r.items.reduce((t, it) => t + itemAmount(it), 0), 0)
     sheetTotal = round2(items + fittingsAmount - g.discount)
