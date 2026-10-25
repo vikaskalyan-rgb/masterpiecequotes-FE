@@ -1,316 +1,386 @@
-import { useState, useEffect, useRef, useLayoutEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
-import QuotePdfTemplate from '../components/QuotePdfTemplate'
-import { generateQuotePdfBlob, pdfFileNameFor, buildWhatsAppMessage } from '../utils/pdf'
+import Icon from '../components/Icon'
+import StatusBadge from '../components/StatusBadge'
+import { STATUS } from '../lib/status'
+import { useToast } from '../components/toastContext'
+import { formatDate, formatDateTime, todayIso } from '../lib/dates'
+import { formatNumber, formatRupees, quoteRef } from '../lib/money'
+import { formatPhone } from '../lib/phone'
+import { ROOM_COLORS } from '../lib/quoteForm'
+import { downloadBlob, pdfFileName, shareFile, whatsappMessage } from '../lib/share'
+import { reportError } from '../lib/errorReporting'
+import css from './QuoteView.module.css'
+
+const loadPdf = () => import('../pdf/generate')
+
+// Everything printed on the PDF, so a status change doesn't trigger a needless re-render.
+function printKey(q) {
+  return q ? JSON.stringify([q.version, q.customerName, q.customerAddress, q.quoteDate, q.validUntil, q.roundedTotal, q.subtotal, q.rooms, q.materialSpecItems, q.termItems, q.accessoriesAmount, q.accessoriesDescription]) : ''
+}
 
 export default function QuoteView() {
   const { id } = useParams()
   const navigate = useNavigate()
-
+  const toast = useToast()
   const [quote, setQuote] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState(null)
+  const [business, setBusiness] = useState(null)
+  const [snapshots, setSnapshots] = useState([])
+  const [error, setError] = useState(null)
+  const [pdf, setPdf] = useState({ blob: null, key: null, failed: false })
+  const [busy, setBusy] = useState(null) // 'share' | 'download' | 'status' | 'delete'
 
-  const [downloading, setDownloading] = useState(false)
-  const [sharing, setSharing] = useState(false)
-  const [pdfBlob, setPdfBlob] = useState(null)
-  const [actionError, setActionError] = useState(null)
-  const [shareNote, setShareNote] = useState(null)
-
-  const captureRef = useRef(null) // full-size, off-screen - used for actual PDF capture
-  const previewContainerRef = useRef(null)
-  const previewContentRef = useRef(null)
-  const [scale, setScale] = useState(1)
-  const [previewHeight, setPreviewHeight] = useState(0)
+  const refreshSnapshots = useCallback(() => api.listSnapshots(id).then(setSnapshots).catch(() => {}), [id])
 
   useEffect(() => {
     let cancelled = false
-    api
-      .getQuote(id)
-      .then((q) => {
-        if (!cancelled) setQuote(q)
+    Promise.all([api.getQuote(id), api.getBusiness()])
+      .then(([q, b]) => {
+        if (cancelled) return
+        setQuote(q)
+        setBusiness(b)
       })
+      .catch((err) => !cancelled && setError(err))
+    refreshSnapshots()
+    return () => {
+      cancelled = true
+    }
+  }, [id, refreshSnapshots])
+
+  // Prepare the PDF in the background as soon as the quote is here.
+  const key = printKey(quote)
+  useEffect(() => {
+    if (!quote || !business || pdf.key === key) return undefined
+    let cancelled = false
+    loadPdf()
+      .then(({ generateQuotePdf }) => generateQuotePdf(quote, business))
+      .then((blob) => !cancelled && setPdf({ blob, key, failed: false }))
       .catch((err) => {
-        if (!cancelled) setLoadError(err.message || 'Could not load this quote')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
+        reportError(err, 'pdf generation')
+        if (!cancelled) setPdf({ blob: null, key, failed: true })
       })
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [quote, business, key, pdf.key])
 
-  // Scale the 780px-wide template down to fit the phone screen for on-screen preview.
-  useLayoutEffect(() => {
-    function recalc() {
-      if (!previewContainerRef.current || !previewContentRef.current) return
-      const containerWidth = previewContainerRef.current.offsetWidth
-      const s = containerWidth / 780
-      setScale(s)
-      setPreviewHeight(previewContentRef.current.scrollHeight * s)
-    }
-    recalc()
-    window.addEventListener('resize', recalc)
-    return () => window.removeEventListener('resize', recalc)
-  }, [quote])
+  const pdfReady = pdf.blob && pdf.key === key
 
-  async function ensurePdfBlob() {
-    if (pdfBlob) return pdfBlob
-    const blob = await generateQuotePdfBlob(captureRef.current)
-    setPdfBlob(blob)
+  async function ensureBlob() {
+    if (pdfReady) return pdf.blob
+    const { generateQuotePdf } = await loadPdf()
+    const blob = await generateQuotePdf(quote, business)
+    setPdf({ blob, key, failed: false })
     return blob
   }
 
+  async function recordShared() {
+    const result = await api.shareQuote(id)
+    setQuote(result.quote)
+    refreshSnapshots()
+    return result
+  }
+
+  async function handleSend() {
+    setBusy('share')
+    try {
+      const blob = await ensureBlob()
+      const file = new File([blob], pdfFileName(quote), { type: 'application/pdf' })
+      const outcome = await shareFile(file, whatsappMessage(quote, business))
+      if (outcome === 'cancelled') return
+      if (outcome === 'unsupported') {
+        downloadBlob(blob, pdfFileName(quote))
+        await recordShared()
+        toast.show('PDF downloaded. Attach it in the WhatsApp chat.', { duration: 8000 })
+        window.open(`https://wa.me/${quote.customerPhone}?text=${encodeURIComponent(whatsappMessage(quote, business))}`, '_blank', 'noopener')
+        return
+      }
+      const result = await recordShared()
+      toast.show(result.newVersion ? 'Sent and saved as a shared version' : 'Sent')
+    } catch (err) {
+      toast.show(err.message || "Couldn't prepare the PDF", { tone: 'danger' })
+    } finally {
+      setBusy(null)
+    }
+  }
+
   async function handleDownload() {
-    setActionError(null)
-    setDownloading(true)
+    setBusy('download')
     try {
-      const blob = await ensurePdfBlob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = pdfFileNameFor(quote.customerName)
-      a.click()
-      URL.revokeObjectURL(url)
+      downloadBlob(await ensureBlob(), pdfFileName(quote))
+      if (quote.status === 'DRAFT') {
+        toast.show('PDF downloaded', {
+          action: {
+            label: 'Mark as sent',
+            onClick: () => recordShared().then(() => toast.show('Marked as sent')).catch((e) => toast.show(e.message, { tone: 'danger' })),
+          },
+          duration: 8000,
+        })
+      }
     } catch (err) {
-      setActionError(err.message || 'Could not generate the PDF')
+      toast.show(err.message || "Couldn't prepare the PDF", { tone: 'danger' })
     } finally {
-      setDownloading(false)
+      setBusy(null)
     }
   }
 
-  // WhatsApp's public sharing surface doesn't let any app (not just us - no app can) jump to
-  // one specific chat with a file already attached. The only file-sharing hook available to a
-  // web app is the OS's native share sheet, which is exactly how "share to WhatsApp" works from
-  // every app on the phone - tap Share, pick WhatsApp, pick the contact, send.
-  async function handleShareWhatsApp() {
-    setActionError(null)
-    setShareNote(null)
-    setSharing(true)
-
+  async function setStatus(status) {
+    if (status === quote.status) return
+    setBusy('status')
     try {
-      const blob = await ensurePdfBlob()
-      const fileName = pdfFileNameFor(quote.customerName)
-      const file = new File([blob], fileName, { type: 'application/pdf' })
-      const message = buildWhatsAppMessage(quote)
-
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        // WhatsApp displays the share's "title" as the editable caption next to the attached
-        // file (confirmed on a real device) - "text" is included too for other apps that read
-        // that field instead. The actual PDF filename is unaffected, it's set on the File itself.
-        await navigator.share({ files: [file], title: message, text: message })
-      } else {
-        // No file-sharing support (mostly desktop browsers) - download it automatically instead.
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = fileName
-        a.click()
-        URL.revokeObjectURL(url)
-        setShareNote('Your browser can\'t open the share sheet directly - the PDF downloaded, attach it in WhatsApp manually.')
-      }
+      setQuote(await api.updateStatus(id, status))
     } catch (err) {
-      // AbortError just means the user closed the native share sheet - not a real error.
-      if (err.name !== 'AbortError') {
-        setActionError(err.message || 'Could not prepare the PDF to share')
-      }
+      toast.show(err.message, { tone: 'danger' })
     } finally {
-      setSharing(false)
+      setBusy(null)
     }
   }
 
-  if (loading) {
+  async function handleDelete() {
+    setBusy('delete')
+    try {
+      await api.deleteQuote(id)
+      const ref = quoteRef(quote.quoteNumber)
+      navigate('/', { replace: true })
+      toast.show(`${ref} deleted`, {
+        duration: 8000,
+        action: {
+          label: 'Undo',
+          onClick: () => api.restoreQuote(id).then(() => navigate(`/quotes/${id}`)).catch((e) => toast.show(e.message, { tone: 'danger' })),
+        },
+      })
+    } catch (err) {
+      toast.show(err.message, { tone: 'danger' })
+      setBusy(null)
+    }
+  }
+
+  async function openSnapshot(snapshot) {
+    try {
+      const payload = await api.getSnapshot(id, snapshot.id)
+      const { generateQuotePdf } = await loadPdf()
+      const blob = await generateQuotePdf(payload.quote, payload.business)
+      downloadBlob(blob, pdfFileName(payload.quote).replace('.pdf', `_sent_${snapshot.createdAt.slice(0, 10)}.pdf`))
+    } catch (err) {
+      toast.show(err.message || "Couldn't open that version", { tone: 'danger' })
+    }
+  }
+
+  const expired = useMemo(
+    () => quote?.validUntil && quote.validUntil < todayIso() && (quote.status === 'SENT' || quote.status === 'DRAFT'),
+    [quote],
+  )
+
+  if (error) {
     return (
-      <div className="qv-state">
-        <div className="qv-spinner" />
-        <span>Loading…</span>
-        <style>{`
-          .qv-state { min-height: 100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--ink-soft); font-size:14px; }
-          .qv-spinner { width:24px; height:24px; border:2.5px solid var(--rule); border-top-color:var(--slate); border-radius:50%; animation: qv-spin 0.7s linear infinite; }
-          @keyframes qv-spin { to { transform: rotate(360deg); } }
-        `}</style>
+      <div className="center-state">
+        <p>{error.status === 404 ? 'This quote was deleted or never existed.' : `Couldn't open this quote. ${error.message}`}</p>
+        <Link className="btn btn--primary" to="/">
+          Back to quotes
+        </Link>
+      </div>
+    )
+  }
+  if (!quote || !business) {
+    return (
+      <div className="center-state" role="status">
+        <div className="spinner" />
+        <span className="visually-hidden">Loading quote</span>
       </div>
     )
   }
 
-  if (loadError || !quote) {
-    return (
-      <div className="qv-state">
-        <span>Couldn't load this quote. {loadError}</span>
-        <button className="qv-back-link" onClick={() => navigate('/')}>
-          Back to Quotes
-        </button>
-        <style>{`
-          .qv-state { min-height: 100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--ink-soft); font-size:14px; padding:24px; text-align:center; }
-          .qv-back-link { border:1px solid var(--ink); background:transparent; padding:10px 20px; border-radius:10px; font-weight:600; }
-        `}</style>
-      </div>
-    )
-  }
+  const diff = Math.round((Number(quote.roundedTotal) - Number(quote.subtotal)) * 100) / 100
+  const fittings = Number(quote.accessoriesAmount) || 0
 
   return (
-    <div className="qv-page">
-      <header className="qv-header">
-        <button className="qv-header-back" onClick={() => navigate('/')} aria-label="Back">
-          ←
-        </button>
-        <div className="qv-header-mid">
-          <h1 className="qv-header-title">{quote.customerName}</h1>
-        </div>
-        <button className="qv-header-edit" onClick={() => navigate(`/quotes/${id}/edit`)}>
+    <div className="page">
+      <header className="topbar">
+        <Link to="/" className="icon-btn" aria-label="Back to quotes">
+          <Icon name="back" />
+        </Link>
+        <h1 className="topbar__title">{quoteRef(quote.quoteNumber)}</h1>
+        <Link to={`/quotes/${id}/edit`} className="btn btn--secondary">
+          <Icon name="edit" size={18} />
           Edit
-        </button>
+        </Link>
       </header>
 
-      <main className="qv-body">
-        <div className="qv-preview-wrap" ref={previewContainerRef} style={{ height: previewHeight }}>
-          <div
-            className="qv-preview-scale"
-            style={{ transform: `scale(${scale})`, transformOrigin: 'top left', width: 780 }}
-          >
-            <div ref={previewContentRef}>
-              <QuotePdfTemplate quote={quote} />
-            </div>
+      <section className={css.hero}>
+        <div className={css.heroTop}>
+          <StatusBadge status={quote.status} />
+          <span className={css.heroDate}>{formatDate(quote.quoteDate)}</span>
+        </div>
+        <h2 className={css.customer}>{quote.customerName}</h2>
+        <p className={`${css.total} num`}>{formatRupees(quote.roundedTotal)}</p>
+        <p className={css.validity}>
+          {quote.validUntil ? (expired ? `Expired on ${formatDate(quote.validUntil)}` : `Valid until ${formatDate(quote.validUntil)}`) : 'No validity date'}
+        </p>
+      </section>
+
+      {quote.changedSinceShared && (
+        <div className="banner banner--warning" role="status">
+          <Icon name="alert" size={18} />
+          <div className="banner__body">
+            You changed this quote after sending it on {formatDateTime(quote.lastSharedAt)}. Send it again so{' '}
+            {quote.customerName} has the latest.
           </div>
         </div>
-
-        {shareNote && <p className="qv-note-text">{shareNote}</p>}
-        {actionError && <p className="qv-error-text">{actionError}</p>}
-
-        <div className="qv-actions">
-          <button
-            className="qv-btn qv-btn-whatsapp"
-            onClick={handleShareWhatsApp}
-            disabled={sharing || downloading}
-          >
-            {sharing ? 'Preparing…' : 'Share PDF on WhatsApp'}
-          </button>
-          <button className="qv-btn qv-btn-secondary" onClick={handleDownload} disabled={downloading || sharing}>
-            {downloading ? 'Preparing…' : 'Download PDF'}
-          </button>
-          <button className="qv-btn qv-btn-ghost" onClick={() => navigate(`/quotes/new?from=${id}`)}>
-            Duplicate Quote
-          </button>
+      )}
+      {expired && !quote.changedSinceShared && (
+        <div className="banner banner--warning" role="status">
+          <Icon name="alert" size={18} />
+          <div className="banner__body">
+            This quote's validity has passed. Edit the date and send it again if the prices still hold.
+          </div>
         </div>
-      </main>
+      )}
 
-      {/* Hidden full-resolution copy used only for PDF capture - kept off-screen so the
-          on-screen preview's CSS transform:scale never interferes with html2canvas. */}
-      <div style={{ position: 'absolute', left: '-9999px', top: 0 }}>
-        <div ref={captureRef}>
-          <QuotePdfTemplate quote={quote} />
-        </div>
+      <div className={css.actions}>
+        <button type="button" className={`btn btn--primary ${css.send}`} onClick={handleSend} disabled={Boolean(busy)}>
+          <Icon name="whatsapp" size={20} />
+          {busy === 'share' ? 'Preparing…' : 'Send on WhatsApp'}
+        </button>
+        <button type="button" className="btn btn--secondary" onClick={handleDownload} disabled={Boolean(busy)}>
+          <Icon name="download" size={18} />
+          {busy === 'download' ? 'Preparing…' : 'Download PDF'}
+        </button>
+        <Link to={`/quotes/new?from=${id}`} className="btn btn--secondary">
+          <Icon name="copy" size={18} />
+          Duplicate
+        </Link>
       </div>
+      {pdf.failed && <p className="field__error">The PDF couldn't be prepared. Try again, or reload the app.</p>}
 
-      <style>{`
-        .qv-page {
-          min-height: 100vh;
-          min-height: 100dvh;
-          background: var(--bg);
-          padding-bottom: 40px;
-        }
-        .qv-header {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          padding: 18px 20px;
-          background: linear-gradient(160deg, #2c2831 0%, #201d22 100%);
-          border-radius: 0 0 22px 22px;
-          box-shadow: 0 8px 24px rgba(35, 33, 38, 0.18);
-        }
-        .qv-header-back {
-          width: 34px;
-          height: 34px;
-          border-radius: 10px;
-          border: none;
-          background: rgba(255,255,255,0.1);
-          color: var(--bg);
-          font-size: 17px;
-          flex-shrink: 0;
-        }
-        .qv-header-mid {
-          flex: 1;
-          min-width: 0;
-        }
-        .qv-header-title {
-          font-size: 17px;
-          font-weight: 500;
-          color: var(--bg);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        .qv-header-edit {
-          flex-shrink: 0;
-          border: 1px solid rgba(255,255,255,0.25);
-          background: transparent;
-          color: var(--bg);
-          font-size: 13px;
-          font-weight: 600;
-          padding: 7px 14px;
-          border-radius: 9px;
-        }
-        .qv-body {
-          padding: 18px 20px 0;
-        }
-        .qv-preview-wrap {
-          overflow: hidden;
-          border-radius: 14px;
-          box-shadow: 0 6px 24px rgba(35, 33, 38, 0.14);
-          border: 1px solid var(--rule);
-          background: var(--paper);
-        }
-        .qv-note-text {
-          color: var(--sage);
-          font-size: 12.5px;
-          text-align: center;
-          padding: 14px 8px 0;
-          line-height: 1.5;
-        }
-        .qv-error-text {
-          color: var(--brick);
-          font-size: 13px;
-          text-align: center;
-          padding: 14px 0 0;
-        }
-        .qv-actions {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-          margin-top: 20px;
-        }
-        .qv-btn {
-          width: 100%;
-          padding: 15px;
-          border-radius: 13px;
-          font-size: 14.5px;
-          font-weight: 600;
-          border: none;
-        }
-        .qv-btn:disabled {
-          opacity: 0.6;
-        }
-        .qv-btn:active:not(:disabled) {
-          transform: scale(0.98);
-        }
-        .qv-btn-whatsapp {
-          background: var(--sage);
-          color: var(--bg);
-          box-shadow: 0 8px 20px rgba(107, 143, 113, 0.3);
-        }
-        .qv-btn-secondary {
-          background: var(--paper);
-          color: var(--ink);
-          border: 1px solid var(--rule);
-        }
-        .qv-btn-ghost {
-          background: transparent;
-          color: var(--slate);
-          border: 1px solid var(--rule);
-        }
-      `}</style>
+      <section className="panel" aria-labelledby="status-heading">
+        <h3 id="status-heading" className="panel__title">
+          Where it stands
+        </h3>
+        <div className={css.statuses} role="radiogroup" aria-labelledby="status-heading">
+          {Object.entries(STATUS).map(([value, meta]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={quote.status === value}
+              className={`${css.status} ${quote.status === value ? css.statusOn : ''}`}
+              onClick={() => setStatus(value)}
+              disabled={busy === 'status'}
+            >
+              <span className={css.statusLabel}>{meta.label}</span>
+              <span className={css.statusHint}>{meta.hint}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel" aria-labelledby="customer-details">
+        <h3 id="customer-details" className="panel__title">
+          Customer
+        </h3>
+        <dl className={css.facts}>
+          <div>
+            <dt>WhatsApp</dt>
+            <dd>
+              <a href={`https://wa.me/${quote.customerPhone}`} target="_blank" rel="noopener noreferrer">
+                {formatPhone(quote.customerPhone)}
+              </a>
+            </dd>
+          </div>
+          {quote.customerAddress && (
+            <div>
+              <dt>Site</dt>
+              <dd>{quote.customerAddress}</dd>
+            </div>
+          )}
+        </dl>
+      </section>
+
+      <section className="panel" aria-labelledby="rooms-heading">
+        <h3 id="rooms-heading" className="panel__title">
+          Rooms
+        </h3>
+        {quote.rooms.map((room, ri) => (
+          <div key={room.id} className={css.room} style={{ '--room-color': ROOM_COLORS[ri % ROOM_COLORS.length] }}>
+            <div className={css.roomHead}>
+              <span className={css.roomName}>{room.name}</span>
+              <span className="num">{formatRupees(room.total)}</span>
+            </div>
+            <ul className={css.items}>
+              {room.items.map((it) => (
+                <li key={it.id}>
+                  <span className={css.itemName}>
+                    {it.description}
+                    <span className={css.itemMeta}>
+                      {it.unit === 'SQFT' ? `${formatNumber(it.length)} × ${formatNumber(it.width)} ft, ` : ''}
+                      {formatNumber(it.quantity)} {it.unit === 'SQFT' ? 'sqft' : 'nos'} at {formatRupees(it.rate)}
+                    </span>
+                  </span>
+                  <span className="num">{formatRupees(it.amount)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {fittings > 0 && (
+          <div className={css.fittings}>
+            <span>
+              Fittings and accessories
+              {quote.accessoriesDescription && <span className={css.itemMeta}>{quote.accessoriesDescription}</span>}
+            </span>
+            <span className="num">{formatRupees(fittings)}</span>
+          </div>
+        )}
+        <dl className={css.sums}>
+          <div>
+            <dt>Items and fittings</dt>
+            <dd className="num">{formatRupees(quote.subtotal)}</dd>
+          </div>
+          {diff !== 0 && (
+            <div>
+              <dt>{quote.totalOverridden ? (diff < 0 ? 'Discount' : 'Adjustment') : 'Rounded off'}</dt>
+              <dd className="num">{diff < 0 ? `− ${formatRupees(-diff)}` : `+ ${formatRupees(diff)}`}</dd>
+            </div>
+          )}
+          <div className={css.sumFinal}>
+            <dt>Total</dt>
+            <dd className="num">{formatRupees(quote.roundedTotal)}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="panel" aria-labelledby="versions-heading">
+        <h3 id="versions-heading" className="panel__title">
+          Sent versions
+        </h3>
+        {snapshots.length === 0 ? (
+          <p className={css.empty}>Not sent yet. Each time you send it, the exact PDF the customer received is kept here.</p>
+        ) : (
+          <ul className={css.versions}>
+            {snapshots.map((snap, i) => (
+              <li key={snap.id}>
+                <span>
+                  <span className={css.versionDate}>{formatDateTime(snap.createdAt)}</span>
+                  {i === 0 && <span className={css.latest}>Latest</span>}
+                </span>
+                <span className="num">{formatRupees(snap.roundedTotal)}</span>
+                <button type="button" className="btn btn--ghost" onClick={() => openSnapshot(snap)}>
+                  <Icon name="download" size={16} />
+                  PDF
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <div className={css.danger}>
+        <button type="button" className="btn btn--danger" onClick={handleDelete} disabled={Boolean(busy)}>
+          <Icon name="trash" size={18} />
+          Delete quote
+        </button>
+      </div>
     </div>
   )
 }

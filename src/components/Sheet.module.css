@@ -1,0 +1,79 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(29, 27, 31, 0.42);
+  animation: fade 160ms ease-out;
+}
+
+.panel {
+  width: 100%;
+  max-width: 520px;
+  max-height: 88dvh;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-5) calc(env(safe-area-inset-bottom) + var(--space-5));
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  background: var(--surface);
+  animation: up 200ms ease-out;
+}
+
+.grabber {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: 0 auto var(--space-4);
+  border-radius: 4px;
+  background: var(--line-strong);
+}
+
+.title {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-2);
+}
+
+.message {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.danger {
+  background: var(--crimson);
+  color: var(--surface);
+}
+
+@media (min-width: 720px) {
+  .backdrop {
+    align-items: center;
+  }
+
+  .panel {
+    border-radius: var(--r-sheet);
+    padding-bottom: var(--space-5);
+  }
+
+  .grabber {
+    display: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes up {
+  from {
+    transform: translateY(24px);
+  }
+}

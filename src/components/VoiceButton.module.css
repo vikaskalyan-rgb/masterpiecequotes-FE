@@ -1,0 +1,47 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.button {
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--ink-2);
+}
+
+.button:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.listening {
+  border-color: var(--crimson);
+  background: var(--danger-soft);
+  color: var(--crimson);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.error {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+@keyframes pulse {
+  50% {
+    box-shadow: 0 0 0 5px rgba(149, 33, 46, 0.15);
+  }
+}

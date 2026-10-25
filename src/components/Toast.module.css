@@ -1,0 +1,65 @@
+.region {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 96px);
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--gutter);
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(100%, 480px);
+  padding: 6px 6px 6px var(--space-4);
+  border-radius: var(--r-panel);
+  background: var(--ink);
+  color: var(--surface);
+  box-shadow: var(--shadow-raised);
+  font-size: var(--text-sm);
+  pointer-events: auto;
+  animation: rise 180ms ease-out;
+}
+
+.danger {
+  background: var(--crimson);
+}
+
+.message {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+}
+
+.action {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: inherit;
+  font-weight: 600;
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+}
