@@ -184,13 +184,45 @@
   font-weight: 600;
 }
 
-.fab {
+.page {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 168px); /* room for the two buttons */
+}
+
+.emptyActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+/* New quote, with Import from Excel right below it. */
+.fabs {
   position: fixed;
   right: max(var(--gutter), calc((100vw - var(--page-max)) / 2 + var(--gutter)));
   bottom: calc(env(safe-area-inset-bottom) + var(--space-5));
   z-index: 10;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.fab,
+.fabSecondary {
+  justify-content: center;
   min-height: 52px;
   padding: 0 var(--space-5);
   box-shadow: var(--shadow-raised);
   font-size: var(--text-md);
+}
+
+.fabSecondary {
+  min-height: 46px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.fabSecondary:hover {
+  background: var(--well);
 }

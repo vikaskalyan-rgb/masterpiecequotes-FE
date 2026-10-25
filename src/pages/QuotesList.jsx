@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import Icon from '../components/Icon'
@@ -9,6 +9,11 @@ import { formatDate, formatMonth, formatRelative } from '../lib/dates'
 import { clearDraft, draftCustomerName, listDrafts } from '../lib/drafts'
 import { formatRupees, quoteRef } from '../lib/money'
 import css from './QuotesList.module.css'
+
+// The Excel reader and parser load only when the import panel is opened.
+const ImportSheet = lazy(() => import('../components/ImportSheet'))
+
+const DRAFT_LABEL = { new: 'New quote', duplicate: 'Copy of another quote', import: 'Imported from Excel' }
 
 const FILTERS = [
   { value: '', label: 'All' },
@@ -49,6 +54,7 @@ export default function QuotesList() {
   const [quotes, setQuotes] = useState(null)
   const [error, setError] = useState(null)
   const [drafts, setDrafts] = useState(() => listDrafts())
+  const [importing, setImporting] = useState(false)
   const debouncedSearch = useDebounced(search.trim(), 250)
 
   const load = useCallback(
@@ -83,7 +89,7 @@ export default function QuotesList() {
     () => new Set(drafts.filter((d) => d.type === 'edit').map((d) => String(d.id))),
     [drafts],
   )
-  const unsavedNew = drafts.filter((d) => d.type === 'new' || d.type === 'duplicate')
+  const unsavedNew = drafts.filter((d) => d.type in DRAFT_LABEL)
 
   function discardDraft(draft) {
     clearDraft(draft.key)
@@ -92,11 +98,13 @@ export default function QuotesList() {
   }
 
   function openDraft(draft) {
-    navigate(draft.type === 'duplicate' ? `/quotes/new?from=${draft.fromId}` : '/quotes/new')
+    if (draft.type === 'duplicate') navigate(`/quotes/new?from=${draft.fromId}`)
+    else if (draft.type === 'import') navigate(`/quotes/new?import=${encodeURIComponent(draft.importId)}`)
+    else navigate('/quotes/new')
   }
 
   return (
-    <div className="page">
+    <div className={`page ${css.page}`}>
       <header className="topbar">
         <Logo size={30} />
         <h1 className="topbar__title">Quotes</h1>
@@ -149,7 +157,7 @@ export default function QuotesList() {
                   <span className={css.rowMain}>
                     <span className={css.name}>{draftCustomerName(d) || 'Untitled quote'}</span>
                     <span className={css.meta}>
-                      {d.type === 'duplicate' ? 'Copy of another quote' : 'New quote'}, edited {formatRelative(d.data.savedAt)}
+                      {DRAFT_LABEL[d.type]}, edited {formatRelative(d.data.savedAt)}
                     </span>
                   </span>
                   <span className={css.resume}>Continue</span>
@@ -196,9 +204,15 @@ export default function QuotesList() {
             <>
               <p className={css.emptyTitle}>No quotes yet</p>
               <p>Measure a room, add its items and send the quote on WhatsApp.</p>
-              <Link to="/quotes/new" className="btn btn--primary">
-                Start a quote
-              </Link>
+              <div className={css.emptyActions}>
+                <Link to="/quotes/new" className="btn btn--primary">
+                  Start a quote
+                </Link>
+                <button type="button" className="btn btn--secondary" onClick={() => setImporting(true)}>
+                  <Icon name="upload" size={18} />
+                  Import from Excel
+                </button>
+              </div>
             </>
           )}
         </div>
@@ -230,10 +244,22 @@ export default function QuotesList() {
         </section>
       ))}
 
-      <Link to="/quotes/new" className={`btn btn--primary ${css.fab}`}>
-        <Icon name="plus" size={18} />
-        New quote
-      </Link>
+      <div className={css.fabs}>
+        <Link to="/quotes/new" className={`btn btn--primary ${css.fab}`}>
+          <Icon name="plus" size={18} />
+          New quote
+        </Link>
+        <button type="button" className={`btn ${css.fabSecondary}`} onClick={() => setImporting(true)}>
+          <Icon name="upload" size={18} />
+          Import from Excel
+        </button>
+      </div>
+
+      {importing && (
+        <Suspense fallback={null}>
+          <ImportSheet open onClose={() => setImporting(false)} />
+        </Suspense>
+      )}
     </div>
   )
 }

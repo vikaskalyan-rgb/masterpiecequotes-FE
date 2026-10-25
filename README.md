@@ -13,6 +13,10 @@ on WhatsApp as a PDF. Talks to the Spring Boot backend
   last quote. The final total follows the items unless you set it by hand, and any difference
   from the items is spelled out. Removing a room or item can be undone.
   Work in progress is kept on the phone, so closing the app never loses a quote.
+- **Import from Excel**: opens a quote sheet (`.xlsx` or `.csv`) as a new quote to check. Reads
+  the app's template and the owner's own sheets: room headings or a Room column, sizes like `7x4`
+  or `7'6"`, billed areas, lump sums, fittings, and the agreed total (before GST). Anything it had
+  to work out is listed for review, and nothing is saved until the quote is confirmed.
 - **Sending**: the PDF is prepared in the background when a quote opens, so the share sheet opens
   instantly. Every send keeps an exact copy of what the customer received; editing afterwards
   shows a reminder to send again.
