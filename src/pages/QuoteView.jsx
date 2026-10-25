@@ -69,10 +69,16 @@ export default function QuoteView() {
 
   async function ensureBlob() {
     if (pdfReady) return pdf.blob
-    const { generateQuotePdf } = await loadPdf()
-    const blob = await generateQuotePdf(quote, business)
-    setPdf({ blob, key, failed: false })
-    return blob
+    try {
+      const { generateQuotePdf } = await loadPdf()
+      const blob = await generateQuotePdf(quote, business)
+      setPdf({ blob, key, failed: false })
+      return blob
+    } catch (err) {
+      // The technical reason goes to the error log; the owner gets something to act on.
+      reportError(err, 'pdf generation')
+      throw new Error("Couldn't prepare the PDF. Check the internet connection and try again.", { cause: err })
+    }
   }
 
   async function recordShared() {
