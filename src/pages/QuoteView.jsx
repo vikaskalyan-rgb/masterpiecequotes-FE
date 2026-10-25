@@ -313,7 +313,7 @@ export default function QuoteView() {
                   <span className={css.itemName}>
                     {it.description}
                     <span className={css.itemMeta}>
-                      {it.unit === 'SQFT' ? `${formatNumber(it.length)} × ${formatNumber(it.width)} ft, ` : ''}
+                      {it.unit === 'SQFT' && it.length != null && it.width != null ? `${formatNumber(it.length)} × ${formatNumber(it.width)} ft, ` : ''}
                       {formatNumber(it.quantity)} {it.unit === 'SQFT' ? 'sqft' : 'nos'} at {formatRupees(it.rate)}
                     </span>
                   </span>

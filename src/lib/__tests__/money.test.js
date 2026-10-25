@@ -9,6 +9,11 @@ describe('quote arithmetic', () => {
     expect(itemQuantity({ unit: 'SQFT', length: '7', width: '' })).toBe(0)
   })
 
+  it('uses the typed area for sqft items entered as a total area', () => {
+    expect(itemQuantity({ unit: 'SQFT', areaAdjusted: true, quantity: '11', length: '', width: '' })).toBe(11)
+    expect(itemAmount({ unit: 'SQFT', areaAdjusted: true, quantity: '11', rate: '1000' })).toBe(11000)
+  })
+
   it('uses the typed count for Nos items', () => {
     expect(itemQuantity({ unit: 'NOS', quantity: '3', length: '7', width: '4' })).toBe(3)
   })

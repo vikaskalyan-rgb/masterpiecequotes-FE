@@ -6,7 +6,7 @@ import { formatPhone, normalizePhone } from './phone'
 
 export const ROOM_COLORS = ['var(--room-1)', 'var(--room-2)', 'var(--room-3)', 'var(--room-4)']
 
-export const emptyItem = () => ({ key: newId(), description: '', unit: 'SQFT', length: '', width: '', quantity: '', rate: '' })
+export const emptyItem = () => ({ key: newId(), description: '', unit: 'SQFT', areaAdjusted: false, length: '', width: '', quantity: '', rate: '' })
 export const emptyRoom = () => ({ key: newId(), name: '', items: [emptyItem()] })
 export const emptySpec = () => ({ key: newId(), itemLabel: '', detail: '', brand: '' })
 export const emptyTerm = () => ({ key: newId(), text: '' })
@@ -17,15 +17,23 @@ function roomsFromApi(rooms) {
   return (rooms || []).map((r) => ({
     key: newId(),
     name: r.name || '',
-    items: (r.items || []).map((i) => ({
-      key: newId(),
-      description: i.description || '',
-      unit: i.unit || 'SQFT',
-      length: str(i.length),
-      width: str(i.width),
-      quantity: i.unit === 'NOS' ? str(i.quantity) : '',
-      rate: str(i.rate),
-    })),
+    items: (r.items || []).map((i) => {
+      const unit = i.unit || 'SQFT'
+      const dims = i.length != null && i.width != null
+      // A billed area that isn't exactly length x width (or has no dimensions) was set by hand.
+      const areaAdjusted =
+        unit === 'SQFT' && (!dims || Math.abs(Number(i.quantity) - Math.round(Number(i.length) * Number(i.width) * 100) / 100) > 0.001)
+      return {
+        key: newId(),
+        description: i.description || '',
+        unit,
+        areaAdjusted,
+        length: dims ? str(i.length) : '',
+        width: dims ? str(i.width) : '',
+        quantity: unit === 'NOS' || areaAdjusted ? str(i.quantity) : '',
+        rate: str(i.rate),
+      }
+    }),
   }))
 }
 
@@ -104,8 +112,9 @@ export function validateForm(form) {
       if (isBlankItem(it)) return
       const p = `rooms.${ri}.items.${ii}`
       if (!it.description.trim()) errors[`${p}.description`] = 'Add a description'
-      if (it.unit === 'SQFT' && (!(parseFloat(it.length) > 0) || !(parseFloat(it.width) > 0)))
+      if (it.unit === 'SQFT' && !it.areaAdjusted && (!(parseFloat(it.length) > 0) || !(parseFloat(it.width) > 0)))
         errors[`${p}.dimensions`] = 'Add length and width'
+      if (it.unit === 'SQFT' && it.areaAdjusted && !(parseFloat(it.quantity) > 0)) errors[`${p}.quantity`] = 'Add the billed area'
       if (it.unit === 'NOS' && !(parseFloat(it.quantity) > 0)) errors[`${p}.quantity`] = 'Add a quantity'
       if (it.rate === '' || Number.isNaN(parseFloat(it.rate))) errors[`${p}.rate`] = 'Add a rate'
       else if (parseFloat(it.rate) < 0) errors[`${p}.rate`] = "Rate can't be negative"
@@ -137,14 +146,20 @@ export function buildPayload(form, { version, clientRequestId } = {}) {
       .filter((r) => r.name.trim() || r.items.length)
       .map((r) => ({
         name: r.name.trim(),
-        items: r.items.map((it) => ({
-          description: it.description.trim(),
-          unit: it.unit,
-          length: it.unit === 'SQFT' ? num(it.length) : null,
-          width: it.unit === 'SQFT' ? num(it.width) : null,
-          quantity: it.unit === 'NOS' ? num(it.quantity) : null,
-          rate: num(it.rate),
-        })),
+        items: r.items.map((it) => {
+          const sqft = it.unit === 'SQFT'
+          const dims = sqft && num(it.length) != null && num(it.width) != null
+          const adjusted = sqft && Boolean(it.areaAdjusted)
+          return {
+            description: it.description.trim(),
+            unit: it.unit,
+            length: dims ? num(it.length) : null,
+            width: dims ? num(it.width) : null,
+            quantity: sqft && !adjusted ? null : num(it.quantity),
+            rate: num(it.rate),
+            areaAdjusted: adjusted,
+          }
+        }),
       })),
     materialSpecItems: form.materialSpecItems
       .filter((s) => s.itemLabel.trim())

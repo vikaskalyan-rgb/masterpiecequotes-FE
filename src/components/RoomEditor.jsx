@@ -1,4 +1,4 @@
-import { formatNumber, formatRupees, itemQuantity, roomTotal } from '../lib/money'
+import { formatNumber, formatRupees, hasDimensions, itemQuantity, roomTotal } from '../lib/money'
 import { emptyItem } from '../lib/quoteForm'
 import Icon from './Icon'
 import ItemEditor from './ItemEditor'
@@ -96,12 +96,14 @@ export default function RoomEditor({ room, index, color, expanded, errors, onTog
               <li key={it.key}>
                 <span className={css.summaryName}>
                   {it.description}
-                  {it.unit === 'SQFT' && it.length && it.width ? (
+                  {hasDimensions(it) && !it.areaAdjusted ? (
                     <span className={css.summaryDims}>
                       {it.length} × {it.width} ft
                     </span>
                   ) : (
-                    <span className={css.summaryDims}>{formatNumber(itemQuantity(it))} nos</span>
+                    <span className={css.summaryDims}>
+                      {formatNumber(itemQuantity(it))} {it.unit === 'SQFT' ? 'sqft' : 'nos'}
+                    </span>
                   )}
                 </span>
               </li>
