@@ -1,0 +1,47 @@
+.page {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: var(--space-5) var(--gutter);
+}
+
+.card {
+  width: min(100%, 380px);
+}
+
+.title {
+  margin-top: var(--space-5);
+  font-size: var(--text-xl);
+}
+
+.sub {
+  margin-top: var(--space-1);
+  color: var(--ink-2);
+}
+
+.form {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.passwordRow {
+  position: relative;
+}
+
+.passwordRow :global(.input) {
+  padding-right: 52px;
+}
+
+.reveal {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+}

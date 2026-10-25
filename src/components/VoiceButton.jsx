@@ -1,118 +1,66 @@
-import { useState } from 'react'
-import { isVoiceSupported, createRecognizer, clearActiveRecognition } from '../utils/voice'
+import { useEffect, useRef, useState } from 'react'
+import { clearActiveRecognition, createRecognizer, isVoiceSupported } from '../lib/voice'
+import Icon from './Icon'
+import css from './VoiceButton.module.css'
 
-export default function VoiceButton({ onResult, label = 'Voice input' }) {
+// Speech input for Android/Chrome. On browsers without speech recognition (iOS Safari, which
+// also disables it in installed apps) the button doesn't render at all.
+export default function VoiceButton({ onResult, label }) {
   const [listening, setListening] = useState(false)
   const [error, setError] = useState(null)
+  const errorTimer = useRef(null)
+
+  useEffect(() => () => clearTimeout(errorTimer.current), [])
 
   if (!isVoiceSupported()) return null
 
-  function handleClick() {
+  function fail(message) {
+    setListening(false)
+    setError(message)
+    clearTimeout(errorTimer.current)
+    errorTimer.current = setTimeout(() => setError(null), 2500)
+  }
+
+  function start() {
     if (listening) return
     setError(null)
-
-    // createRecognizer() force-stops any other mic session that might still be tearing down,
-    // so overlapping taps across different fields can't collide.
     const recognition = createRecognizer()
     if (!recognition) return
-
     recognition.onstart = () => setListening(true)
     recognition.onerror = (e) => {
-      // Log the real error code (e.g. 'no-speech', 'network', 'aborted', 'audio-capture') so
-      // if a *new* failure mode shows up later we're not debugging blind from a generic
-      // on-screen message again.
-      console.error('SpeechRecognition error:', e.error)
-      setListening(false)
       clearActiveRecognition(recognition)
-      setError(e.error === 'no-speech' ? "Didn't catch that" : 'Voice input failed')
-      setTimeout(() => setError(null), 2500)
+      fail(e.error === 'no-speech' ? "Didn't catch that" : e.error === 'not-allowed' ? 'Microphone blocked' : 'Voice input failed')
     }
     recognition.onend = () => {
       setListening(false)
       clearActiveRecognition(recognition)
     }
-    recognition.onresult = (e) => {
-      const transcript = e.results[0][0].transcript
-      onResult(transcript)
-    }
-
+    recognition.onresult = (e) => onResult(e.results[0][0].transcript)
     try {
       recognition.start()
-    } catch (err) {
-      // Synchronous InvalidStateError can be thrown if the browser hasn't fully released the
-      // previous audio session yet, even after stopActiveRecognition(). Treat it the same as
-      // any other failure rather than letting it go uncaught.
-      console.error('SpeechRecognition start() threw:', err)
+    } catch {
       clearActiveRecognition(recognition)
-      setListening(false)
-      setError('Voice input failed')
-      setTimeout(() => setError(null), 2500)
+      fail('Voice input failed')
     }
   }
 
   return (
-    <span className="voice-btn-wrap">
+    <span className={css.wrap}>
       <button
         type="button"
-        className={`voice-btn ${listening ? 'voice-btn-active' : ''}`}
-        onClick={handleClick}
+        className={`${css.button} ${listening ? css.listening : ''}`}
+        onClick={start}
         aria-label={label}
+        aria-pressed={listening}
         title={label}
       >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-          <rect x="6" y="1.5" width="4" height="7.5" rx="2" stroke="currentColor" strokeWidth="1.3" />
-          <path
-            d="M3.3 7.5a4.7 4.7 0 009.4 0M8 12.2v2.3"
-            stroke="currentColor"
-            strokeWidth="1.3"
-            strokeLinecap="round"
-          />
-        </svg>
+        <Icon name="mic" size={18} />
       </button>
-      {error && <span className="voice-btn-error">{error}</span>}
-
-      <style>{`
-        .voice-btn-wrap {
-          position: relative;
-          display: inline-flex;
-          flex-shrink: 0;
-        }
-        .voice-btn {
-          width: 30px;
-          height: 30px;
-          border-radius: 8px;
-          border: none;
-          background: var(--bg);
-          color: var(--ink-soft);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          flex-shrink: 0;
-        }
-        .voice-btn-active {
-          background: var(--brick);
-          color: var(--paper);
-          animation: voice-pulse 0.9s ease-in-out infinite;
-        }
-        @keyframes voice-pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.55; }
-        }
-        .voice-btn-error {
-          position: absolute;
-          top: calc(100% + 4px);
-          right: 0;
-          font-size: 10.5px;
-          font-weight: 500;
-          color: var(--brick);
-          white-space: nowrap;
-          background: var(--paper);
-          padding: 4px 8px;
-          border-radius: 7px;
-          box-shadow: 0 3px 10px rgba(35, 33, 38, 0.16);
-          z-index: 30;
-        }
-      `}</style>
+      {error && (
+        <span className={css.error} role="status">
+          {error}
+        </span>
+      )}
     </span>
   )
 }

@@ -1,902 +1,669 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
-import RoomBlock from '../components/RoomBlock'
+import Icon from '../components/Icon'
+import RoomEditor from '../components/RoomEditor'
+import SuggestInput from '../components/SuggestInput'
 import VoiceButton from '../components/VoiceButton'
-import { parseDescription, buildDescription } from '../components/ItemRow'
-import { formatRupees, formatRelativeTime } from '../utils/format'
-import { draftKeyFor, saveDraft, loadDraft, clearDraft } from '../utils/draftStorage'
+import { useToast } from '../components/toastContext'
+import { addDays, daysBetween, formatRelative } from '../lib/dates'
+import { clearDraft, draftKeyFor, draftStatus, loadDraft, saveDraft } from '../lib/drafts'
+import { newId } from '../lib/ids'
+import { formatRupees, quoteRef, subtotalOf, suggestedTotal } from '../lib/money'
+import { formatPhone } from '../lib/phone'
+import {
+  ROOM_COLORS,
+  buildPayload,
+  emptyRoom,
+  emptySpec,
+  emptyTerm,
+  fingerprint,
+  formForDuplicate,
+  formForNewQuote,
+  formFromQuote,
+  validateForm,
+} from '../lib/quoteForm'
+import css from './QuoteBuilder.module.css'
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10)
+const ROUNDING_LABEL = {
+  NEAREST: (step) => `Rounded to the nearest ${formatRupees(step)}`,
+  UP: (step) => `Rounded up to the next ${formatRupees(step)}`,
+  NONE: () => 'Same as the items total',
 }
 
 export default function QuoteBuilder() {
   const { id } = useParams()
   const [searchParams] = useSearchParams()
-  const duplicateFromId = searchParams.get('from')
+  const duplicateFromId = id ? null : searchParams.get('from')
   const navigate = useNavigate()
-  const isEdit = Boolean(id)
-  const draftKey = draftKeyFor({ isEdit, id, duplicateFromId })
-  const keyCounter = useRef(0)
-  const nextKey = () => `k${keyCounter.current++}`
+  const toast = useToast()
+  const draftKey = draftKeyFor({ id, duplicateFromId })
 
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState(null)
+  const [business, setBusiness] = useState(null)
+  const [meta, setMeta] = useState({ baseVersion: null, quoteNumber: null, clientRequestId: newId() })
   const [loadError, setLoadError] = useState(null)
+  const [banner, setBanner] = useState(null) // { kind: 'restored'|'draftConflict'|'saveConflict', ... }
+  const [errors, setErrors] = useState({})
   const [saveError, setSaveError] = useState(null)
-  const [validationError, setValidationError] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [expanded, setExpanded] = useState(null)
+  const cleanPrint = useRef(null)
+  const serverForm = useRef(null)
 
-  // Set once a local draft is found and restored on load - shown as a dismissible banner so
-  // Kalyan knows unsaved changes were brought back, and can discard them if they're stale.
-  const [restoredDraftAt, setRestoredDraftAt] = useState(null)
-  // Holds the "clean" state (server data for edit/duplicate, or nothing for new) so Discard
-  // can revert to it instead of just clearing the form.
-  const cleanSnapshotRef = useRef(null)
-
-  const [customerName, setCustomerName] = useState('')
-  const [customerPhone, setCustomerPhone] = useState('')
-  const [customerAddress, setCustomerAddress] = useState('')
-  const [quoteDate, setQuoteDate] = useState(todayISO())
-
-  const [rooms, setRooms] = useState([])
-  const [expandedRoomKey, setExpandedRoomKey] = useState(null)
-  const [accessoriesDescription, setAccessoriesDescription] = useState('')
-  const [accessoriesAmount, setAccessoriesAmount] = useState('')
-
-  const [materialSpecItems, setMaterialSpecItems] = useState([])
-  const [termItems, setTermItems] = useState([])
-
-  const [roundedTotal, setRoundedTotal] = useState('')
-  const [roundedTotalTouched, setRoundedTotalTouched] = useState(false)
-
-  // ---- mapping helpers ----
-  function emptyItem() {
-    return { _key: nextKey(), id: null, base: '', length: '', width: '', unit: 'SQFT', quantity: 0, rate: '' }
-  }
-  function emptyRoom() {
-    return { _key: nextKey(), id: null, name: '', items: [emptyItem()] }
-  }
-  function emptySpec() {
-    return { _key: nextKey(), id: null, itemLabel: '', detail: '', brand: '' }
-  }
-  function emptyTerm() {
-    return { _key: nextKey(), id: null, text: '' }
-  }
-
-  function mapItemFromApi(dto) {
-    const parsed = parseDescription(dto.description)
-    return {
-      _key: nextKey(),
-      id: dto.id,
-      base: parsed.base,
-      length: dto.length != null ? String(dto.length) : '',
-      width: dto.width != null ? String(dto.width) : '',
-      unit: dto.unit,
-      quantity: dto.quantity != null ? String(dto.quantity) : '0',
-      rate: dto.rate != null ? String(dto.rate) : '',
-    }
-  }
-  function mapRoomFromApi(dto) {
-    return { _key: nextKey(), id: dto.id, name: dto.name, items: dto.items.map(mapItemFromApi) }
-  }
-  function mapSpecFromApi(dto) {
-    return { _key: nextKey(), id: dto.id, itemLabel: dto.itemLabel, detail: dto.detail || '', brand: dto.brand || '' }
-  }
-  function mapTermFromApi(dto) {
-    return { _key: nextKey(), id: dto.id, text: dto.text }
-  }
-  // Defaults come from a different table (DefaultMaterialSpecItem/DefaultTermItem) - their ids
-  // must NOT be reused as this quote's own row ids, so always force id: null here.
-  function mapSpecFromDefaults(dto) {
-    return { _key: nextKey(), id: null, itemLabel: dto.itemLabel, detail: dto.detail || '', brand: dto.brand || '' }
-  }
-  function mapTermFromDefaults(dto) {
-    return { _key: nextKey(), id: null, text: dto.text }
-  }
-
-  // Sets every piece of builder state from a plain snapshot object - used both to apply the
-  // freshly-loaded server/default state and to overlay a restored local draft on top of it,
-  // so both code paths stay in sync instead of duplicating ~10 setter calls twice.
-  function applySnapshot(s) {
-    setCustomerName(s.customerName || '')
-    setCustomerPhone(s.customerPhone || '')
-    setCustomerAddress(s.customerAddress || '')
-    setQuoteDate(s.quoteDate || todayISO())
-    setRooms(s.rooms && s.rooms.length ? s.rooms : [emptyRoom()])
-    setExpandedRoomKey(s.expandedRoomKey ?? null)
-    setAccessoriesDescription(s.accessoriesDescription || '')
-    setAccessoriesAmount(s.accessoriesAmount != null ? String(s.accessoriesAmount) : '')
-    setMaterialSpecItems(s.materialSpecItems || [])
-    setTermItems(s.termItems || [])
-    setRoundedTotal(s.roundedTotal != null ? String(s.roundedTotal) : '')
-    setRoundedTotalTouched(Boolean(s.roundedTotalTouched))
-  }
-
-  // Restored draft rooms/items/etc. already carry their own "_key" values (e.g. "k3") from the
-  // session that saved them. If keyCounter isn't advanced past the highest one, a *newly* added
-  // room/item after restoring could collide with a key already in use, confusing React's list
-  // reconciliation. This scans the draft once and fast-forwards the counter past it.
-  function bumpKeyCounterPastDraft(draft) {
-    let maxNum = -1
-    const scan = (arr) => {
-      for (const o of arr || []) {
-        if (typeof o._key === 'string' && o._key.startsWith('k')) {
-          const n = parseInt(o._key.slice(1), 10)
-          if (!isNaN(n) && n > maxNum) maxNum = n
-        }
-      }
-    }
-    scan(draft.rooms)
-    ;(draft.rooms || []).forEach((r) => scan(r.items))
-    scan(draft.materialSpecItems)
-    scan(draft.termItems)
-    if (maxNum >= keyCounter.current) keyCounter.current = maxNum + 1
-  }
-
-  // ---- initial load ----
+  // ---------- load ----------
   useEffect(() => {
     let cancelled = false
-
-    function afterLoad(snapshot) {
-      if (cancelled) return
-      cleanSnapshotRef.current = snapshot
-      applySnapshot(snapshot)
+    async function load() {
+      const businessP = api.getBusiness()
+      let base
+      let version = null
+      let number = null
+      if (id) {
+        const [q, b] = await Promise.all([api.getQuote(id), businessP])
+        if (cancelled) return
+        setBusiness(b)
+        base = formFromQuote(q)
+        version = q.version
+        number = q.quoteNumber
+      } else if (duplicateFromId) {
+        const [q, b] = await Promise.all([api.getQuote(duplicateFromId), businessP])
+        if (cancelled) return
+        setBusiness(b)
+        base = formForDuplicate(q, b)
+      } else {
+        const [defaults, b] = await Promise.all([api.getDefaults().catch(() => null), businessP])
+        if (cancelled) return
+        setBusiness(b)
+        base = formForNewQuote(defaults, b)
+      }
+      serverForm.current = base
+      cleanPrint.current = fingerprint(base)
 
       const draft = loadDraft(draftKey)
-      if (draft) {
-        bumpKeyCounterPastDraft(draft)
-        applySnapshot(draft)
-        setRestoredDraftAt(draft.savedAt)
+      const status = draftStatus(draft, version)
+      if (status === 'clean' && draft.form) {
+        setForm(draft.form)
+        setMeta({ baseVersion: version, quoteNumber: number, clientRequestId: draft.clientRequestId || newId() })
+        setBanner({ kind: 'restored', savedAt: draft.savedAt })
+        setExpanded(draft.expanded ?? null)
+      } else {
+        setForm(base)
+        setMeta({ baseVersion: version, quoteNumber: number, clientRequestId: newId() })
+        setExpanded(id || duplicateFromId ? null : base.rooms[0]?.key)
+        if (status === 'conflict' && draft.form) setBanner({ kind: 'draftConflict', draft })
       }
-      setLoading(false)
     }
-
-    if (isEdit) {
-      api
-        .getQuote(id)
-        .then((q) => {
-          if (cancelled) return
-          afterLoad({
-            customerName: q.customerName || '',
-            customerPhone: q.customerPhone || '',
-            customerAddress: q.customerAddress || '',
-            quoteDate: q.quoteDate || todayISO(),
-            rooms: q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()],
-            expandedRoomKey: null, // review mode: start with everything collapsed for a clean overview
-            accessoriesDescription: q.accessoriesDescription || '',
-            accessoriesAmount: q.accessoriesAmount != null ? String(q.accessoriesAmount) : '',
-            materialSpecItems:
-              q.materialSpecItems && q.materialSpecItems.length ? q.materialSpecItems.map(mapSpecFromApi) : [],
-            termItems: q.termItems && q.termItems.length ? q.termItems.map(mapTermFromApi) : [],
-            roundedTotal: q.roundedTotal != null ? String(q.roundedTotal) : '',
-            roundedTotalTouched: true, // it's a real saved value - never silently overwrite it
-          })
-        })
-        .catch((err) => {
-          if (cancelled) return
-          setLoadError(err.message || 'Could not load this quote')
-          setLoading(false)
-        })
-    } else if (duplicateFromId) {
-      api
-        .getQuote(duplicateFromId)
-        .then((q) => {
-          if (cancelled) return
-          // Customer fields deliberately left blank - this is a fresh quote for a (likely
-          // different) customer, only the room/item/rate structure is being reused.
-          afterLoad({
-            customerName: '',
-            customerPhone: '',
-            customerAddress: '',
-            quoteDate: todayISO(),
-            rooms: q.rooms && q.rooms.length ? q.rooms.map(mapRoomFromApi) : [emptyRoom()],
-            expandedRoomKey: null, // collapsed - this is pre-filled content to review, not a blank form
-            accessoriesDescription: q.accessoriesDescription || '',
-            accessoriesAmount: q.accessoriesAmount != null ? String(q.accessoriesAmount) : '',
-            materialSpecItems:
-              q.materialSpecItems && q.materialSpecItems.length ? q.materialSpecItems.map(mapSpecFromApi) : [],
-            termItems: q.termItems && q.termItems.length ? q.termItems.map(mapTermFromApi) : [],
-            roundedTotal: q.roundedTotal != null ? String(q.roundedTotal) : '',
-            roundedTotalTouched: true,
-          })
-        })
-        .catch((err) => {
-          if (cancelled) return
-          setLoadError(err.message || 'Could not load the quote to duplicate')
-          setLoading(false)
-        })
-    } else {
-      const firstRoom = emptyRoom()
-      api
-        .getDefaults()
-        .then((d) => {
-          if (cancelled) return
-          afterLoad({
-            customerName: '',
-            customerPhone: '',
-            customerAddress: '',
-            quoteDate: todayISO(),
-            rooms: [firstRoom],
-            expandedRoomKey: firstRoom._key,
-            accessoriesDescription: '',
-            accessoriesAmount: '',
-            materialSpecItems: (d.materialSpecItems || []).map(mapSpecFromDefaults),
-            termItems: (d.termItems || []).map(mapTermFromDefaults),
-            roundedTotal: '',
-            roundedTotalTouched: false,
-          })
-        })
-        .catch(() => {
-          // Defaults are a convenience, not critical - proceed with an empty quote if they fail.
-          if (cancelled) return
-          afterLoad({
-            customerName: '',
-            customerPhone: '',
-            customerAddress: '',
-            quoteDate: todayISO(),
-            rooms: [firstRoom],
-            expandedRoomKey: firstRoom._key,
-            accessoriesDescription: '',
-            accessoriesAmount: '',
-            materialSpecItems: [],
-            termItems: [],
-            roundedTotal: '',
-            roundedTotalTouched: false,
-          })
-        })
-    }
-
+    load().catch((err) => !cancelled && setLoadError(err.message))
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, duplicateFromId])
+  }, [id, duplicateFromId, draftKey])
 
-  // ---- autosave ----
-  // Debounced local snapshot on every meaningful change, so an accidental app close or dropped
-  // connection never loses more than a moment's typing. Skipped while the initial load/restore
-  // is still in flight so we don't overwrite a not-yet-applied draft with blank defaults.
+  // ---------- autosave to this device (only when something actually changed) ----------
   useEffect(() => {
-    if (loading) return
+    if (!form || banner?.kind === 'draftConflict') return undefined
     const t = setTimeout(() => {
-      saveDraft(draftKey, {
-        customerName,
-        customerPhone,
-        customerAddress,
-        quoteDate,
-        rooms,
-        expandedRoomKey,
-        accessoriesDescription,
-        accessoriesAmount,
-        materialSpecItems,
-        termItems,
-        roundedTotal,
-        roundedTotalTouched,
-      })
-    }, 500)
+      if (fingerprint(form) === cleanPrint.current) clearDraft(draftKey)
+      else saveDraft(draftKey, { form, baseVersion: meta.baseVersion, clientRequestId: meta.clientRequestId, expanded })
+    }, 400)
     return () => clearTimeout(t)
-  }, [
-    loading,
-    draftKey,
-    customerName,
-    customerPhone,
-    customerAddress,
-    quoteDate,
-    rooms,
-    expandedRoomKey,
-    accessoriesDescription,
-    accessoriesAmount,
-    materialSpecItems,
-    termItems,
-    roundedTotal,
-    roundedTotalTouched,
-  ])
+  }, [form, meta, expanded, draftKey, banner])
 
-  function discardDraft() {
-    clearDraft(draftKey)
-    setRestoredDraftAt(null)
-    if (cleanSnapshotRef.current) applySnapshot(cleanSnapshotRef.current)
+  const update = useCallback((patch) => setForm((f) => ({ ...f, ...(typeof patch === 'function' ? patch(f) : patch) })), [])
+
+  // ---------- totals (live preview; the server recomputes on save) ----------
+  const subtotal = useMemo(() => (form ? subtotalOf(form.rooms, form.accessoriesAmount) : 0), [form])
+  const suggested = useMemo(
+    () => suggestedTotal(subtotal, business?.roundingMode, business?.roundingStep),
+    [subtotal, business],
+  )
+  const finalTotal = form?.totalOverridden ? Number(form.roundedTotal) || 0 : suggested
+
+  const fetchCustomers = useCallback((q, signal) => api.suggestCustomers(q, signal), [])
+
+  if (loadError) {
+    return (
+      <div className="center-state">
+        <p>Couldn't open this quote. {loadError}</p>
+        <Link className="btn btn--primary" to="/">
+          Back to quotes
+        </Link>
+      </div>
+    )
+  }
+  if (!form) {
+    return (
+      <div className="center-state" role="status">
+        <div className="spinner" />
+        <span className="visually-hidden">Loading</span>
+      </div>
+    )
   }
 
-  // ---- live totals ----
-  const subtotal = useMemo(() => {
-    const itemsSum = rooms.reduce(
-      (sum, r) =>
-        sum + r.items.reduce((s, it) => s + (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0), 0),
-      0
-    )
-    return itemsSum + (parseFloat(accessoriesAmount) || 0)
-  }, [rooms, accessoriesAmount])
+  // ---------- rooms ----------
+  function setRoom(updated) {
+    update((f) => ({ rooms: f.rooms.map((r) => (r.key === updated.key ? updated : r)) }))
+  }
 
-  useEffect(() => {
-    if (!roundedTotalTouched) {
-      const suggested = Math.round(subtotal / 1000) * 1000
-      setRoundedTotal(suggested > 0 ? String(suggested) : '')
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subtotal])
-
-  // ---- room/item handlers ----
   function addRoom() {
     const room = emptyRoom()
-    setRooms([...rooms, room])
-    setExpandedRoomKey(room._key) // auto-expand the new room, which implicitly collapses the rest
-  }
-  function removeRoom(key) {
-    setRooms(rooms.filter((r) => r._key !== key))
-    setExpandedRoomKey((current) => (current === key ? null : current))
-  }
-  function changeRoom(key, updated) {
-    setRooms(rooms.map((r) => (r._key === key ? updated : r)))
-  }
-  function addItem(roomKey) {
-    setRooms(rooms.map((r) => (r._key === roomKey ? { ...r, items: [...r.items, emptyItem()] } : r)))
-  }
-  function changeItem(roomKey, itemKey, updated) {
-    setRooms(
-      rooms.map((r) =>
-        r._key === roomKey ? { ...r, items: r.items.map((it) => (it._key === itemKey ? updated : it)) } : r
-      )
-    )
-  }
-  function removeItem(roomKey, itemKey) {
-    setRooms(
-      rooms.map((r) => (r._key === roomKey ? { ...r, items: r.items.filter((it) => it._key !== itemKey) } : r))
-    )
+    update((f) => ({ rooms: [...f.rooms, room] }))
+    setExpanded(room.key)
   }
 
-  // ---- material spec handlers ----
-  function addSpec() {
-    setMaterialSpecItems([...materialSpecItems, emptySpec()])
-  }
-  function changeSpec(key, field, value) {
-    setMaterialSpecItems(materialSpecItems.map((s) => (s._key === key ? { ...s, [field]: value } : s)))
-  }
-  function removeSpec(key) {
-    setMaterialSpecItems(materialSpecItems.filter((s) => s._key !== key))
-  }
-
-  // ---- terms handlers ----
-  function addTerm() {
-    setTermItems([...termItems, emptyTerm()])
-  }
-  function changeTerm(key, value) {
-    setTermItems(termItems.map((t) => (t._key === key ? { ...t, text: value } : t)))
-  }
-  function removeTerm(key) {
-    setTermItems(termItems.filter((t) => t._key !== key))
+  function removeRoom(room) {
+    const index = form.rooms.findIndex((r) => r.key === room.key)
+    update((f) => ({ rooms: f.rooms.filter((r) => r.key !== room.key) }))
+    toast.show(`${room.name || 'Room'} removed`, {
+      action: {
+        label: 'Undo',
+        onClick: () =>
+          update((f) => {
+            const rooms = [...f.rooms]
+            rooms.splice(index, 0, room)
+            return { rooms }
+          }),
+      },
+    })
   }
 
-  // ---- save ----
-  async function handleSave() {
-    setValidationError(null)
-    setSaveError(null)
+  function removeItem(room, item) {
+    const index = room.items.findIndex((it) => it.key === item.key)
+    update((f) => ({
+      rooms: f.rooms.map((r) => (r.key === room.key ? { ...r, items: r.items.filter((it) => it.key !== item.key) } : r)),
+    }))
+    toast.show(`${item.description || 'Item'} removed`, {
+      action: {
+        label: 'Undo',
+        onClick: () =>
+          update((f) => ({
+            rooms: f.rooms.map((r) => {
+              if (r.key !== room.key) return r
+              const items = [...r.items]
+              items.splice(index, 0, item)
+              return { ...r, items }
+            }),
+          })),
+      },
+    })
+  }
 
-    if (!customerName.trim()) {
-      setValidationError('Customer name is required.')
-      return
-    }
-    if (!customerPhone.trim()) {
-      setValidationError('Customer phone is required.')
-      return
-    }
+  // ---------- list editors for spec + terms ----------
+  const setListItem = (list, key, patch) => update((f) => ({ [list]: f[list].map((x) => (x.key === key ? { ...x, ...patch } : x)) }))
+  const removeListItem = (list, key) => update((f) => ({ [list]: f[list].filter((x) => x.key !== key) }))
 
-    const payload = {
-      customerName: customerName.trim(),
-      customerPhone: customerPhone.trim(),
-      customerAddress: customerAddress.trim(),
+  // ---------- dates ----------
+  function setQuoteDate(quoteDate) {
+    update((f) => ({
       quoteDate,
-      roundedTotal: parseFloat(roundedTotal) || 0,
-      accessoriesDescription: accessoriesDescription.trim(),
-      accessoriesAmount: parseFloat(accessoriesAmount) || 0,
-      rooms: rooms
-        .filter((r) => r.name.trim() || r.items.some((it) => it.base.trim()))
-        .map((r, ri) => ({
-          name: r.name.trim(),
-          sortOrder: ri,
-          items: r.items
-            .filter((it) => it.base.trim())
-            .map((it, ii) => ({
-              description: buildDescription(it.base.trim(), it.unit, it.length, it.width),
-              length: it.unit === 'SQFT' && it.length ? parseFloat(it.length) : null,
-              width: it.unit === 'SQFT' && it.width ? parseFloat(it.width) : null,
-              quantity: parseFloat(it.quantity) || 0,
-              unit: it.unit,
-              rate: parseFloat(it.rate) || 0,
-              amount: (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0),
-              sortOrder: ii,
-            })),
-        })),
-      materialSpecItems: materialSpecItems
-        .filter((s) => s.itemLabel.trim())
-        .map((s, si) => ({ itemLabel: s.itemLabel.trim(), detail: s.detail.trim(), brand: s.brand.trim(), sortOrder: si })),
-      termItems: termItems
-        .filter((t) => t.text.trim())
-        .map((t, ti) => ({ text: t.text.trim(), sortOrder: ti })),
-    }
+      validUntil: f.validUntilTouched ? f.validUntil : addDays(quoteDate, business?.validityDays ?? 30),
+    }))
+  }
+
+  // ---------- draft banners ----------
+  function discardRestored() {
+    clearDraft(draftKey)
+    setForm(serverForm.current)
+    setBanner(null)
+  }
+
+  function useDraftAnyway() {
+    setForm(banner.draft.form)
+    setBanner(null)
+  }
+
+  function keepLatest() {
+    clearDraft(draftKey)
+    setBanner(null)
+  }
+
+  // ---------- save ----------
+  function showErrors(next, first) {
+    setErrors(next)
+    if (!first) return
+    const roomMatch = /^rooms\.(\d+)\./.exec(first)
+    if (roomMatch) setExpanded(form.rooms[Number(roomMatch[1])]?.key)
+    setTimeout(() => {
+      const el = document.querySelector(`[data-error-path="${first}"]`) || document.querySelector('[aria-invalid="true"]')
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el?.focus?.({ preventScroll: true })
+    }, 50)
+  }
+
+  async function save({ overwrite = false } = {}) {
+    setSaveError(null)
+    const { errors: next, firstError } = validateForm(form)
+    showErrors(next, firstError)
+    if (firstError) return
 
     setSaving(true)
     try {
-      if (isEdit) {
-        await api.updateQuote(id, payload)
-      } else {
-        await api.createQuote(payload)
-      }
+      let version = meta.baseVersion
+      if (overwrite && id) version = (await api.getQuote(id)).version
+      const payload = buildPayload(form, { version, clientRequestId: id ? null : meta.clientRequestId })
+      const saved = id ? await api.updateQuote(id, payload) : await api.createQuote(payload)
       clearDraft(draftKey)
-      navigate('/')
+      cleanPrint.current = fingerprint(form)
+      toast.show(`${quoteRef(saved.quoteNumber)} saved`)
+      navigate(`/quotes/${saved.id}`, { replace: true })
     } catch (err) {
-      setSaveError(err.message || 'Could not save the quote')
+      if (err.isConflict && id) {
+        setBanner({ kind: 'saveConflict' })
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      } else if (err.fields) {
+        const mapped = {}
+        for (const [k, v] of Object.entries(err.fields)) mapped[k] = v
+        showErrors(mapped, Object.keys(mapped)[0])
+        setSaveError(err.message)
+      } else {
+        setSaveError(err.message)
+      }
     } finally {
       setSaving(false)
     }
   }
 
-  if (loading) {
-    return (
-      <div className="qb-loading">
-        <div className="qb-spinner" />
-        <span>Loading…</span>
-        <style>{`
-          .qb-loading { min-height: 100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--ink-soft); font-size:14px; }
-          .qb-spinner { width:24px; height:24px; border:2.5px solid var(--rule); border-top-color:var(--slate); border-radius:50%; animation: qb-spin 0.7s linear infinite; }
-          @keyframes qb-spin { to { transform: rotate(360deg); } }
-        `}</style>
-      </div>
-    )
+  async function loadLatest() {
+    clearDraft(draftKey)
+    const q = await api.getQuote(id)
+    const base = formFromQuote(q)
+    serverForm.current = base
+    cleanPrint.current = fingerprint(base)
+    setForm(base)
+    setMeta((m) => ({ ...m, baseVersion: q.version }))
+    setBanner(null)
+    toast.show('Loaded the latest version')
   }
 
-  if (loadError) {
-    return (
-      <div className="qb-loading">
-        <span>Couldn't load this quote. {loadError}</span>
-        <button className="qb-back-link" onClick={() => navigate('/')}>
-          Back to Quotes
-        </button>
-        <style>{`
-          .qb-loading { min-height: 100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--ink-soft); font-size:14px; padding: 24px; text-align:center; }
-          .qb-back-link { border:1px solid var(--ink); background:transparent; padding:10px 20px; border-radius:10px; font-weight:600; }
-        `}</style>
-      </div>
-    )
-  }
+  const title = id ? `Edit ${quoteRef(meta.quoteNumber)}` : duplicateFromId ? 'Copy of quote' : 'New quote'
+  const diff = Math.round((finalTotal - subtotal) * 100) / 100
+  const roundingText = (ROUNDING_LABEL[business?.roundingMode] || ROUNDING_LABEL.NEAREST)(business?.roundingStep ?? 1000)
+  const validDays = form.validUntil ? daysBetween(form.quoteDate, form.validUntil) : null
 
   return (
-    <div className="qb-page">
-      <header className="qb-header">
-        <button className="qb-header-back" onClick={() => navigate('/')} aria-label="Back">
-          ←
-        </button>
-        <h1 className="qb-header-title">{isEdit ? 'Edit Quote' : duplicateFromId ? 'Duplicate Quote' : 'New Quote'}</h1>
+    <div className={`page ${css.page}`}>
+      <header className="topbar">
+        <Link to={id ? `/quotes/${id}` : '/'} className="icon-btn" aria-label="Back">
+          <Icon name="back" />
+        </Link>
+        <h1 className="topbar__title">{title}</h1>
       </header>
 
-      <main className="qb-body">
-        {restoredDraftAt && (
-          <div className="qb-draft-banner">
-            <span>Restored unsaved changes from {formatRelativeTime(restoredDraftAt)}.</span>
-            <button type="button" className="qb-draft-discard" onClick={discardDraft}>
-              Discard
-            </button>
-          </div>
-        )}
-        {duplicateFromId && (
-          <div className="qb-duplicate-banner">
-            Rooms, items, and rates copied over - fill in the new customer's details below.
-          </div>
-        )}
-        {/* ---- Customer details ---- */}
-        <section className="qb-section">
-          <h2 className="qb-section-title">Customer Details</h2>
-          <div className="qb-input-row">
-            <input
-              type="text"
-              placeholder="Customer name"
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              className="qb-input"
-            />
-            <VoiceButton onResult={(text) => setCustomerName(text.trim())} label="Say customer name" />
-          </div>
-          <input
-            type="tel"
-            placeholder="Phone number (with country code, e.g. 91XXXXXXXXXX)"
-            value={customerPhone}
-            onChange={(e) => setCustomerPhone(e.target.value)}
-            className="qb-input"
-          />
-          <div className="qb-input-row">
-            <textarea
-              placeholder="Address"
-              value={customerAddress}
-              onChange={(e) => setCustomerAddress(e.target.value)}
-              className="qb-input qb-textarea"
-              rows={2}
-            />
-            <VoiceButton onResult={(text) => setCustomerAddress(text.trim())} label="Say address" />
-          </div>
-          <div>
-            <label className="qb-label">Quote date</label>
-            <input
-              type="date"
-              value={quoteDate}
-              onChange={(e) => setQuoteDate(e.target.value)}
-              className="qb-input"
-            />
-          </div>
-        </section>
-
-        {/* ---- Rooms & Items ---- */}
-        <section className="qb-section">
-          <h2 className="qb-section-title">Rooms &amp; Items</h2>
-          {rooms.map((room) => (
-            <RoomBlock
-              key={room._key}
-              room={room}
-              expanded={expandedRoomKey === room._key}
-              onToggleExpand={() =>
-                setExpandedRoomKey((current) => (current === room._key ? null : room._key))
-              }
-              onChange={(updated) => changeRoom(room._key, updated)}
-              onRemove={() => removeRoom(room._key)}
-              onAddItem={() => addItem(room._key)}
-              onChangeItem={(itemKey, updated) => changeItem(room._key, itemKey, updated)}
-              onRemoveItem={(itemKey) => removeItem(room._key, itemKey)}
-            />
-          ))}
-          <button type="button" className="qb-add-room" onClick={addRoom}>
-            + Add Room
-          </button>
-        </section>
-
-        {/* ---- Accessories ---- */}
-        <section className="qb-section">
-          <h2 className="qb-section-title">Fittings &amp; Accessories</h2>
-          <div className="qb-input-row">
-            <input
-              type="text"
-              placeholder="e.g. Cutlery Basket, Oil Pull-Out, Tandem Box"
-              value={accessoriesDescription}
-              onChange={(e) => setAccessoriesDescription(e.target.value)}
-              className="qb-input"
-            />
-            <VoiceButton onResult={(text) => setAccessoriesDescription(text.trim())} label="Say accessories" />
-          </div>
-          <input
-            type="number"
-            inputMode="decimal"
-            placeholder="Amount"
-            value={accessoriesAmount}
-            onChange={(e) => setAccessoriesAmount(e.target.value)}
-            className="qb-input"
-          />
-        </section>
-
-        {/* ---- Totals ---- */}
-        <section className="qb-section qb-totals-section">
-          <div className="qb-totals-row">
-            <span>Subtotal</span>
-            <span className="mono">{formatRupees(subtotal)}</span>
-          </div>
-          <div className="qb-totals-row qb-totals-final">
-            <span>Final Total</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              value={roundedTotal}
-              onChange={(e) => {
-                setRoundedTotalTouched(true)
-                setRoundedTotal(e.target.value)
-              }}
-              className="qb-total-input mono"
-            />
-          </div>
-          <p className="qb-totals-hint">Auto-suggested to the nearest ₹1,000 - edit freely for discounts.</p>
-        </section>
-
-        {/* ---- Material Spec ---- */}
-        <section className="qb-section">
-          <h2 className="qb-section-title">Material Specification</h2>
-          {materialSpecItems.map((s) => (
-            <div key={s._key} className="qb-spec-row">
-              <input
-                type="text"
-                placeholder="Item (e.g. Plywood)"
-                value={s.itemLabel}
-                onChange={(e) => changeSpec(s._key, 'itemLabel', e.target.value)}
-                className="qb-input qb-spec-label"
-              />
-              <input
-                type="text"
-                placeholder="Detail"
-                value={s.detail}
-                onChange={(e) => changeSpec(s._key, 'detail', e.target.value)}
-                className="qb-input qb-spec-detail"
-              />
-              <input
-                type="text"
-                placeholder="Brand"
-                value={s.brand}
-                onChange={(e) => changeSpec(s._key, 'brand', e.target.value)}
-                className="qb-input qb-spec-brand"
-              />
-              <button type="button" className="qb-row-remove" onClick={() => removeSpec(s._key)}>
-                ×
+      {banner?.kind === 'restored' && (
+        <div className="banner banner--info" role="status">
+          <Icon name="history" size={18} />
+          <div className="banner__body">
+            Brought back your unsaved changes from {formatRelative(banner.savedAt)}.
+            <div className="banner__actions">
+              <button type="button" className="btn" onClick={() => setBanner(null)}>
+                Keep them
+              </button>
+              <button type="button" className="btn" onClick={discardRestored}>
+                Discard
               </button>
             </div>
-          ))}
-          <button type="button" className="qb-add-row" onClick={addSpec}>
-            + Add row
-          </button>
-        </section>
-
-        {/* ---- Terms ---- */}
-        <section className="qb-section">
-          <h2 className="qb-section-title">Terms &amp; Conditions</h2>
-          {termItems.map((t, i) => (
-            <div key={t._key} className="qb-term-row">
-              <span className="qb-term-num mono">{i + 1}</span>
-              <input
-                type="text"
-                placeholder="Term"
-                value={t.text}
-                onChange={(e) => changeTerm(t._key, e.target.value)}
-                className="qb-input qb-term-input"
-              />
-              <button type="button" className="qb-row-remove" onClick={() => removeTerm(t._key)}>
-                ×
+          </div>
+        </div>
+      )}
+      {banner?.kind === 'draftConflict' && (
+        <div className="banner banner--warning" role="alert">
+          <Icon name="alert" size={18} />
+          <div className="banner__body">
+            You have unsaved changes from {formatRelative(banner.draft.savedAt)}, but this quote was saved on another
+            device after that. You're seeing the latest saved version.
+            <div className="banner__actions">
+              <button type="button" className="btn" onClick={keepLatest}>
+                Keep the latest
+              </button>
+              <button type="button" className="btn" onClick={useDraftAnyway}>
+                Use my unsaved changes
               </button>
             </div>
-          ))}
-          <button type="button" className="qb-add-row" onClick={addTerm}>
-            + Add term
-          </button>
-        </section>
+          </div>
+        </div>
+      )}
+      {banner?.kind === 'saveConflict' && (
+        <div className="banner banner--warning" role="alert">
+          <Icon name="alert" size={18} />
+          <div className="banner__body">
+            This quote was changed on another device while you were editing. Your changes are not saved yet.
+            <div className="banner__actions">
+              <button type="button" className="btn" onClick={loadLatest}>
+                Load the latest
+              </button>
+              <button type="button" className="btn" onClick={() => save({ overwrite: true })}>
+                Save mine instead
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {duplicateFromId && (
+        <p className={css.note}>Rooms, items and rates are copied. Add the new customer below.</p>
+      )}
 
-        {validationError && <p className="qb-error-text">{validationError}</p>}
-        {saveError && <p className="qb-error-text">Couldn't save. {saveError}</p>}
-      </main>
+      {/* ---------- Customer ---------- */}
+      <section className="panel" aria-labelledby="customer-heading">
+        <h2 id="customer-heading" className="panel__title">
+          Customer
+        </h2>
+        <div className="stack">
+          <div className="field">
+            <label className="field__label" htmlFor="customerName">
+              Name
+            </label>
+            <div className={css.inline}>
+              <SuggestInput
+                id="customerName"
+                value={form.customerName}
+                onChange={(customerName) => update({ customerName })}
+                fetchSuggestions={fetchCustomers}
+                itemKey={(c) => c.phone}
+                renderItem={(c) => (
+                  <span className={css.customerOption}>
+                    <strong>{c.name}</strong>
+                    <span>{formatPhone(c.phone)}</span>
+                  </span>
+                )}
+                onPick={(c) => update({ customerName: c.name, customerPhone: formatPhone(c.phone), customerAddress: c.address || '' })}
+                autoCapitalize="words"
+                aria-invalid={Boolean(errors.customerName)}
+                data-error-path="customerName"
+              />
+              <VoiceButton label="Say the customer's name" onResult={(t) => update({ customerName: t.trim() })} />
+            </div>
+            {errors.customerName && <p className="field__error">{errors.customerName}</p>}
+          </div>
 
-      <div className="qb-save-bar">
-        <button className="qb-save-btn" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving…' : `Save Quote · ${formatRupees(roundedTotal || subtotal)}`}
+          <div className="field">
+            <label className="field__label" htmlFor="customerPhone">
+              WhatsApp number
+            </label>
+            <SuggestInput
+              id="customerPhone"
+              type="tel"
+              inputMode="tel"
+              placeholder="10-digit mobile number"
+              value={form.customerPhone}
+              onChange={(customerPhone) => update({ customerPhone })}
+              fetchSuggestions={fetchCustomers}
+              minChars={4}
+              itemKey={(c) => c.phone}
+              renderItem={(c) => (
+                <span className={css.customerOption}>
+                  <strong>{c.name}</strong>
+                  <span>{formatPhone(c.phone)}</span>
+                </span>
+              )}
+              onPick={(c) => update({ customerName: c.name, customerPhone: formatPhone(c.phone), customerAddress: c.address || '' })}
+              aria-invalid={Boolean(errors.customerPhone)}
+              data-error-path="customerPhone"
+            />
+            {errors.customerPhone && <p className="field__error">{errors.customerPhone}</p>}
+          </div>
+
+          <div className="field">
+            <label className="field__label" htmlFor="customerAddress">
+              Site address
+            </label>
+            <div className={css.inline}>
+              <textarea
+                id="customerAddress"
+                className="input"
+                rows={2}
+                value={form.customerAddress}
+                onChange={(e) => update({ customerAddress: e.target.value })}
+              />
+              <VoiceButton label="Say the address" onResult={(t) => update({ customerAddress: t.trim() })} />
+            </div>
+          </div>
+
+          <div className={css.twoCol}>
+            <div className="field">
+              <label className="field__label" htmlFor="quoteDate">
+                Quote date
+              </label>
+              <input
+                id="quoteDate"
+                className="input"
+                type="date"
+                value={form.quoteDate}
+                onChange={(e) => setQuoteDate(e.target.value)}
+                aria-invalid={Boolean(errors.quoteDate)}
+                data-error-path="quoteDate"
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor="validUntil">
+                Valid until
+              </label>
+              <input
+                id="validUntil"
+                className="input"
+                type="date"
+                min={form.quoteDate}
+                value={form.validUntil}
+                onChange={(e) => update({ validUntil: e.target.value, validUntilTouched: true })}
+                aria-invalid={Boolean(errors.validUntil)}
+                aria-describedby="validity-hint"
+                data-error-path="validUntil"
+              />
+              <span id="validity-hint" className="field__hint">
+                {errors.validUntil ? '' : validDays != null && validDays >= 0 ? `${validDays} days` : ''}
+              </span>
+              {errors.validUntil && <p className="field__error">{errors.validUntil}</p>}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ---------- Rooms ---------- */}
+      <section className={css.rooms} aria-labelledby="rooms-heading">
+        <div className={css.sectionHead}>
+          <h2 id="rooms-heading" className={css.sectionTitle}>
+            Rooms
+          </h2>
+          <span className={`${css.sectionMeta} num`}>{formatRupees(subtotal - (Number(form.accessoriesAmount) || 0))}</span>
+        </div>
+        {errors.rooms && <p className="field__error">{errors.rooms}</p>}
+        {form.rooms.map((room, index) => (
+          <RoomEditor
+            key={room.key}
+            room={room}
+            index={index}
+            color={ROOM_COLORS[index % ROOM_COLORS.length]}
+            expanded={expanded === room.key}
+            errors={errors}
+            onToggle={() => setExpanded((k) => (k === room.key ? null : room.key))}
+            onChange={setRoom}
+            onRemove={() => removeRoom(room)}
+            onRemoveItem={(item) => removeItem(room, item)}
+          />
+        ))}
+        <button type="button" className={`btn btn--secondary btn--block ${css.addRoom}`} onClick={addRoom}>
+          <Icon name="plus" size={18} />
+          Add room
         </button>
-      </div>
+      </section>
 
-      <style>{`
-        .qb-page {
-          min-height: 100vh;
-          min-height: 100dvh;
-          background: var(--bg);
-          padding-bottom: 100px;
-        }
-        .qb-header {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          padding: 18px 20px;
-          background: linear-gradient(160deg, #2c2831 0%, #201d22 100%);
-          border-radius: 0 0 22px 22px;
-          box-shadow: 0 8px 24px rgba(35, 33, 38, 0.18);
-        }
-        .qb-header-back {
-          width: 34px;
-          height: 34px;
-          border-radius: 10px;
-          border: none;
-          background: rgba(255,255,255,0.1);
-          color: var(--bg);
-          font-size: 17px;
-        }
-        .qb-header-title {
-          font-size: 18px;
-          font-weight: 500;
-          color: var(--bg);
-        }
-        .qb-body {
-          padding: 18px 20px 0;
-        }
-        .qb-duplicate-banner {
-          background: var(--sage-light);
-          color: var(--sage);
-          border: 1px solid var(--sage);
-          border-radius: 11px;
-          padding: 11px 14px;
-          font-size: 13px;
-          font-weight: 500;
-          margin-bottom: 16px;
-        }
-        .qb-draft-banner {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          background: var(--brick-light);
-          color: var(--brick);
-          border: 1px solid var(--brick);
-          border-radius: 11px;
-          padding: 11px 14px;
-          font-size: 13px;
-          font-weight: 500;
-          margin-bottom: 16px;
-        }
-        .qb-draft-discard {
-          flex-shrink: 0;
-          background: transparent;
-          border: none;
-          color: var(--brick);
-          font-weight: 700;
-          font-size: 12.5px;
-          text-decoration: underline;
-        }
-        .qb-section {
-          background: var(--paper);
-          border: 1px solid var(--rule);
-          border-radius: 15px;
-          padding: 16px;
-          margin-bottom: 16px;
-          box-shadow: 0 3px 12px rgba(35, 33, 38, 0.06);
-        }
-        .qb-section-title {
-          font-size: 15px;
-          font-weight: 600;
-          margin-bottom: 12px;
-        }
-        .qb-input {
-          width: 100%;
-          border: 1px solid var(--rule);
-          border-radius: 10px;
-          background: var(--bg);
-          padding: 11px 12px;
-          font-size: 14px;
-          margin-bottom: 10px;
-        }
-        .qb-input:focus {
-          outline: none;
-          border-color: var(--slate);
-        }
-        .qb-input:last-child { margin-bottom: 0; }
-        .qb-input-row {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-bottom: 10px;
-        }
-        .qb-input-row:last-child { margin-bottom: 0; }
-        .qb-input-row .qb-input {
-          flex: 1;
-          min-width: 0;
-          margin-bottom: 0;
-        }
-        .qb-textarea {
-          resize: vertical;
-          font-family: inherit;
-        }
-        .qb-label {
-          display: block;
-          font-size: 11px;
-          color: var(--ink-soft);
-          margin-bottom: 4px;
-          font-weight: 600;
-        }
-        .qb-add-room {
-          width: 100%;
-          border: 1.5px dashed var(--slate);
-          background: transparent;
-          color: var(--slate);
-          font-weight: 600;
-          font-size: 14px;
-          padding: 12px;
-          border-radius: 11px;
-        }
-        .qb-totals-section {
-          background: linear-gradient(160deg, #2c2831 0%, #201d22 100%);
-          border: none;
-        }
-        .qb-totals-row {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          color: rgba(250,247,241,0.7);
-          font-size: 13.5px;
-          padding: 4px 0;
-        }
-        .qb-totals-final {
-          margin-top: 6px;
-          padding-top: 12px;
-          border-top: 1px solid rgba(250,247,241,0.15);
-          color: var(--bg);
-          font-size: 15px;
-          font-weight: 600;
-        }
-        .qb-total-input {
-          width: 140px;
-          text-align: right;
-          background: rgba(255,255,255,0.08);
-          border: 1px solid rgba(255,255,255,0.2);
-          border-radius: 8px;
-          padding: 7px 10px;
-          color: var(--terracotta);
-          font-size: 16px;
-          font-weight: 600;
-        }
-        .qb-total-input:focus {
-          outline: none;
-          border-color: var(--terracotta);
-        }
-        .qb-totals-hint {
-          font-size: 11px;
-          color: rgba(250,247,241,0.5);
-          margin-top: 10px;
-        }
-        .qb-spec-row, .qb-term-row {
-          display: flex;
-          gap: 6px;
-          align-items: center;
-          margin-bottom: 8px;
-        }
-        .qb-spec-label { flex: 1.2; margin-bottom: 0; }
-        .qb-spec-detail { flex: 1.4; margin-bottom: 0; }
-        .qb-spec-brand { flex: 1; margin-bottom: 0; }
-        .qb-term-num {
-          flex-shrink: 0;
-          width: 20px;
-          font-size: 12px;
-          color: var(--brick);
-          text-align: center;
-        }
-        .qb-term-input { flex: 1; margin-bottom: 0; }
-        .qb-row-remove {
-          flex-shrink: 0;
-          width: 28px;
-          height: 28px;
-          border-radius: 8px;
-          border: none;
-          background: var(--brick-light);
-          color: var(--brick);
-          font-size: 16px;
-        }
-        .qb-add-row {
-          border: 1.5px dashed var(--rule);
-          background: transparent;
-          color: var(--ink-soft);
-          font-size: 12.5px;
-          font-weight: 600;
-          padding: 8px 14px;
-          border-radius: 8px;
-          margin-top: 2px;
-        }
-        .qb-error-text {
-          color: var(--brick);
-          font-size: 13px;
-          text-align: center;
-          padding: 8px 0 16px;
-        }
-        .qb-save-bar {
-          position: fixed;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
-          background: linear-gradient(to top, var(--bg) 70%, transparent);
-        }
-        .qb-save-btn {
-          width: 100%;
-          background: var(--ink);
-          color: var(--bg);
-          border: none;
-          padding: 15px;
-          border-radius: 13px;
-          font-size: 15px;
-          font-weight: 600;
-          box-shadow: 0 8px 24px rgba(35, 33, 38, 0.3);
-        }
-        .qb-save-btn:disabled {
-          opacity: 0.6;
-        }
-        .qb-save-btn:active:not(:disabled) {
-          transform: scale(0.98);
-        }
-      `}</style>
+      {/* ---------- Fittings ---------- */}
+      <section className="panel" aria-labelledby="fittings-heading">
+        <h2 id="fittings-heading" className="panel__title">
+          Fittings and accessories
+        </h2>
+        <div className="stack">
+          <div className={css.inline}>
+            <label htmlFor="accessoriesDescription" className="visually-hidden">
+              Fittings description
+            </label>
+            <input
+              id="accessoriesDescription"
+              className="input"
+              placeholder="e.g. Cutlery basket, tandem boxes, oil pull-out"
+              value={form.accessoriesDescription}
+              onChange={(e) => update({ accessoriesDescription: e.target.value })}
+            />
+            <VoiceButton label="Say the fittings" onResult={(t) => update({ accessoriesDescription: t.trim() })} />
+          </div>
+          <div className={css.moneyField}>
+            <label htmlFor="accessoriesAmount" className="field__label">
+              Amount
+            </label>
+            <span className={css.prefixed}>
+              <span>₹</span>
+              <input
+                id="accessoriesAmount"
+                className="input num"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                placeholder="0"
+                value={form.accessoriesAmount}
+                onChange={(e) => update({ accessoriesAmount: e.target.value })}
+                aria-invalid={Boolean(errors.accessoriesAmount)}
+                data-error-path="accessoriesAmount"
+              />
+            </span>
+            {errors.accessoriesAmount && <p className="field__error">{errors.accessoriesAmount}</p>}
+          </div>
+        </div>
+      </section>
+
+      {/* ---------- Total ---------- */}
+      <section className={`panel ${css.totalPanel}`} aria-labelledby="total-heading">
+        <h2 id="total-heading" className="panel__title">
+          Total
+        </h2>
+        <dl className={css.totals}>
+          <div>
+            <dt>Items and fittings</dt>
+            <dd className="num">{formatRupees(subtotal, { paise: 'auto' })}</dd>
+          </div>
+          <div className={css.finalRow}>
+            <dt>Final total</dt>
+            <dd className="num">
+              {form.totalOverridden ? (
+                <span className={css.prefixed}>
+                  <span>₹</span>
+                  <input
+                    className={`input num ${css.totalInput}`}
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    aria-label="Final total"
+                    value={form.roundedTotal}
+                    onChange={(e) => update({ roundedTotal: e.target.value })}
+                    aria-invalid={Boolean(errors.roundedTotal)}
+                    data-error-path="roundedTotal"
+                    autoFocus
+                  />
+                </span>
+              ) : (
+                formatRupees(suggested)
+              )}
+            </dd>
+          </div>
+        </dl>
+        <p className={css.totalNote}>
+          {form.totalOverridden ? 'Set by you' : roundingText}
+          {diff !== 0 && (
+            <span className={diff < 0 ? css.below : css.above}>
+              {diff < 0 ? `${formatRupees(-diff)} less than the items` : `${formatRupees(diff)} more than the items`}
+            </span>
+          )}
+        </p>
+        {errors.roundedTotal && <p className="field__error">{errors.roundedTotal}</p>}
+        <div className={css.totalActions}>
+          {form.totalOverridden ? (
+            <button type="button" className="btn btn--ghost" onClick={() => update({ totalOverridden: false, roundedTotal: '' })}>
+              Use {formatRupees(suggested)} instead
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => update({ totalOverridden: true, roundedTotal: String(suggested) })}
+            >
+              Set a different total
+            </button>
+          )}
+        </div>
+      </section>
+
+      {/* ---------- Material spec ---------- */}
+      <details className={`panel ${css.details}`}>
+        <summary>
+          <span className={css.summaryTitle}>Material specification</span>
+          <span className={css.summaryMeta}>{form.materialSpecItems.length} rows</span>
+          <Icon name="chevronDown" size={18} className={css.summaryIcon} />
+        </summary>
+        <div className={css.rows}>
+          {form.materialSpecItems.map((s) => (
+            <div key={s.key} className={css.specRow}>
+              <input className="input" aria-label="Item" placeholder="Item, e.g. Plywood" value={s.itemLabel}
+                onChange={(e) => setListItem('materialSpecItems', s.key, { itemLabel: e.target.value })} />
+              <input className="input" aria-label="Specification" placeholder="Specification" value={s.detail}
+                onChange={(e) => setListItem('materialSpecItems', s.key, { detail: e.target.value })} />
+              <input className="input" aria-label="Brand" placeholder="Brand" value={s.brand}
+                onChange={(e) => setListItem('materialSpecItems', s.key, { brand: e.target.value })} />
+              <button type="button" className="icon-btn" aria-label={`Remove ${s.itemLabel || 'row'}`}
+                onClick={() => removeListItem('materialSpecItems', s.key)}>
+                <Icon name="close" size={18} />
+              </button>
+            </div>
+          ))}
+          <button type="button" className="btn btn--ghost" onClick={() => update((f) => ({ materialSpecItems: [...f.materialSpecItems, emptySpec()] }))}>
+            <Icon name="plus" size={18} />
+            Add row
+          </button>
+        </div>
+      </details>
+
+      {/* ---------- Terms ---------- */}
+      <details className={`panel ${css.details}`}>
+        <summary>
+          <span className={css.summaryTitle}>Terms and conditions</span>
+          <span className={css.summaryMeta}>{form.termItems.length} terms</span>
+          <Icon name="chevronDown" size={18} className={css.summaryIcon} />
+        </summary>
+        <ol className={css.terms}>
+          {form.termItems.map((t, i) => (
+            <li key={t.key} className={css.termRow}>
+              <span className={`${css.termNum} num`} aria-hidden="true">{i + 1}</span>
+              <textarea className="input" rows={2} aria-label={`Term ${i + 1}`} value={t.text}
+                onChange={(e) => setListItem('termItems', t.key, { text: e.target.value })} />
+              <button type="button" className="icon-btn" aria-label={`Remove term ${i + 1}`} onClick={() => removeListItem('termItems', t.key)}>
+                <Icon name="close" size={18} />
+              </button>
+            </li>
+          ))}
+        </ol>
+        <button type="button" className="btn btn--ghost" onClick={() => update((f) => ({ termItems: [...f.termItems, emptyTerm()] }))}>
+          <Icon name="plus" size={18} />
+          Add term
+        </button>
+      </details>
+
+      {saveError && (
+        <div className="banner banner--danger" role="alert" style={{ marginTop: 'var(--space-4)' }}>
+          <Icon name="alert" size={18} />
+          <div className="banner__body">{saveError}</div>
+        </div>
+      )}
+
+      {/* ---------- Sticky save bar ---------- */}
+      <div className={css.bar}>
+        <div className={css.barInner}>
+          <div className={css.barTotal}>
+            <span className={css.barLabel}>Final total</span>
+            <span className={`${css.barValue} num`}>{formatRupees(finalTotal)}</span>
+          </div>
+          <button type="button" className="btn btn--primary" onClick={() => save()} disabled={saving}>
+            {saving ? 'Saving…' : 'Save quote'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

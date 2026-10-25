@@ -1,0 +1,162 @@
+.item {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+}
+
+.item + .item {
+  border-top: 1px dashed var(--line-strong);
+}
+
+.top,
+.measure,
+.rateRow,
+.dimInputs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.measure {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.desc {
+  font-weight: 500;
+}
+
+.suggestion {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.suggestionUnit {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+.units {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 3px;
+  border-radius: var(--r-control);
+  background: var(--well);
+}
+
+.unit {
+  min-width: 52px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.unitOn {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(29, 27, 31, 0.12);
+}
+
+.dims {
+  display: grid;
+  flex: 1;
+  min-width: 220px;
+  gap: 4px;
+}
+
+.dimBox {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.dimInput {
+  padding-right: 34px;
+  text-align: right;
+}
+
+.suffix {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  pointer-events: none;
+}
+
+.times {
+  color: var(--ink-3);
+}
+
+.dimLine {
+  display: flex;
+  align-items: center;
+  margin-right: calc(var(--tap) + var(--space-2));
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+
+.rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.tick {
+  width: 1px;
+  height: 9px;
+  background: var(--line-strong);
+}
+
+.dimValue {
+  padding: 0 8px;
+  font-variation-settings: var(--wide);
+}
+
+.rateRow {
+  align-items: flex-end;
+}
+
+.rateBox {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  max-width: 220px;
+  gap: 4px;
+}
+
+.rateLabel {
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+}
+
+.rateField {
+  position: relative;
+}
+
+.prefix {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  color: var(--ink-3);
+}
+
+.rateInput {
+  padding-left: 28px;
+}
+
+.amount {
+  margin-left: auto;
+  padding-bottom: 10px;
+  font-variation-settings: var(--wide);
+  font-weight: 600;
+  white-space: nowrap;
+}

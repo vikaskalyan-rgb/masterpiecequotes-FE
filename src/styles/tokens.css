@@ -1,0 +1,74 @@
+/* Masterpiece Quotes design tokens.
+   Base: quiet white and ink. Accents: only the four room colours of the Masterpiece logo,
+   used to mark rooms (a quote is a house divided into rooms, like the logo). */
+:root {
+  --canvas: #fafaf8;
+  --surface: #ffffff;
+  --well: #f0efec;
+  --line: #e3e1dc;
+  --line-strong: #cfccc5;
+
+  --ink: #1d1b1f;
+  --ink-2: #5b5e68;
+  --ink-3: #8a8c94;
+
+  /* Logo room colours */
+  --crimson: #95212e;
+  --teal: #335d6d;
+  --salmon: #f28763;
+  --room-1: var(--crimson);
+  --room-2: var(--teal);
+  --room-3: var(--salmon);
+  --room-4: var(--ink);
+
+  --accent: var(--teal);
+  --accent-soft: #e4ecef;
+  --danger: var(--crimson);
+  --danger-soft: #f6e5e6;
+  --success: #2f6b4f;
+  --success-soft: #e3efe8;
+  --warning: #8a5a00;
+  --warning-soft: #fbf0d9;
+
+  /* Status */
+  --status-draft: var(--ink-2);
+  --status-sent: var(--teal);
+  --status-accepted: var(--success);
+  --status-rejected: var(--crimson);
+
+  /* Type: one family (Archivo). Width carries hierarchy: expanded for headings and totals. */
+  --font: 'Archivo Variable', 'Archivo', system-ui, sans-serif;
+  --wide: 'wdth' 112;
+  --text-xs: 0.8125rem;   /* 13 */
+  --text-sm: 0.9375rem;   /* 15 */
+  --text-md: 1rem;        /* 16 */
+  --text-lg: 1.1875rem;   /* 19 */
+  --text-xl: 1.5rem;      /* 24 */
+  --text-2xl: 2rem;       /* 32 */
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Radius follows hierarchy: controls < panels < sheets */
+  --r-control: 10px;
+  --r-panel: 16px;
+  --r-sheet: 22px;
+
+  --shadow-raised: 0 1px 2px rgba(29, 27, 31, 0.06), 0 8px 24px rgba(29, 27, 31, 0.08);
+  --gutter: 16px;
+  --page-max: 720px;
+  --tap: 44px;
+
+  color-scheme: light;
+}
+
+@media (min-width: 720px) {
+  :root {
+    --gutter: 24px;
+  }
+}

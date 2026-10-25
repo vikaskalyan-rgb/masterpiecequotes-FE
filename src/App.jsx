@@ -1,42 +1,61 @@
-import { Suspense, lazy } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { Fragment, Suspense, lazy, useEffect, useState } from 'react'
+import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom'
+import ErrorBoundary from './components/ErrorBoundary'
+import { ToastProvider } from './components/Toast'
+import UpdatePrompt from './components/UpdatePrompt'
+import { currentAuthHeader, onAuthChange } from './lib/auth'
+import Login from './pages/Login'
 import QuotesList from './pages/QuotesList'
 import QuoteBuilder from './pages/QuoteBuilder'
-import Settings from './pages/Settings'
-import Analytics from './pages/Analytics'
+import NotFound from './pages/NotFound'
 
-// QuoteView pulls in jsPDF + html2canvas (~900KB) - code-split so the home screen
-// and builder stay light, and that weight only loads when a quote is actually opened.
+// PDF generation is heavy; it only loads when a quote is opened.
 const QuoteView = lazy(() => import('./pages/QuoteView'))
+const Insights = lazy(() => import('./pages/Insights'))
+const Settings = lazy(() => import('./pages/Settings'))
 
-function RouteLoading() {
+// A fresh screen per URL: moving from one quote (or the new-quote form) to another never
+// carries over state from the previous one.
+function PerUrl({ children }) {
+  const { pathname, search } = useLocation()
+  return <Fragment key={pathname + search}>{children}</Fragment>
+}
+
+function Loading() {
   return (
-    <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-soft)', fontSize: 14 }}>
-      Loading…
+    <div className="center-state" role="status">
+      <div className="spinner" />
+      <span className="visually-hidden">Loading</span>
     </div>
   )
 }
 
-function App() {
+export default function App() {
+  const [signedIn, setSignedIn] = useState(() => Boolean(currentAuthHeader()))
+  useEffect(() => onAuthChange(setSignedIn), [])
+
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<QuotesList />} />
-        <Route path="/quotes/new" element={<QuoteBuilder />} />
-        <Route path="/quotes/:id/edit" element={<QuoteBuilder />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/analytics" element={<Analytics />} />
-        <Route
-          path="/quotes/:id"
-          element={
-            <Suspense fallback={<RouteLoading />}>
-              <QuoteView />
+    <ToastProvider>
+      <UpdatePrompt />
+      <ErrorBoundary>
+        {!signedIn ? (
+          <Login />
+        ) : (
+          <BrowserRouter>
+            <Suspense fallback={<Loading />}>
+              <Routes>
+                <Route path="/" element={<QuotesList />} />
+                <Route path="/quotes/new" element={<PerUrl><QuoteBuilder /></PerUrl>} />
+                <Route path="/quotes/:id/edit" element={<PerUrl><QuoteBuilder /></PerUrl>} />
+                <Route path="/quotes/:id" element={<PerUrl><QuoteView /></PerUrl>} />
+                <Route path="/insights" element={<Insights />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
             </Suspense>
-          }
-        />
-      </Routes>
-    </BrowserRouter>
+          </BrowserRouter>
+        )}
+      </ErrorBoundary>
+    </ToastProvider>
   )
 }
-
-export default App
