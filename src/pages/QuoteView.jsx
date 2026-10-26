@@ -11,6 +11,8 @@ import { formatPhone } from '../lib/phone'
 import { ROOM_COLORS } from '../lib/quoteForm'
 import { downloadBlob, pdfFileName, shareFile, whatsappMessage } from '../lib/share'
 import { reportError } from '../lib/errorReporting'
+import { cachedBusiness, cachedQuote, forgetQuote, loadBusiness, loadQuote, rememberQuote } from '../lib/cache'
+import Loader from '../components/Loader'
 import css from './QuoteView.module.css'
 
 const loadPdf = () => import('../pdf/generate')
@@ -24,8 +26,10 @@ export default function QuoteView() {
   const { id } = useParams()
   const navigate = useNavigate()
   const toast = useToast()
-  const [quote, setQuote] = useState(null)
-  const [business, setBusiness] = useState(null)
+  // Opens instantly with what this tab last saw (or what was just saved), then refreshes.
+  const [quote, setQuoteState] = useState(() => cachedQuote(id))
+  const [business, setBusiness] = useState(() => cachedBusiness())
+  const setQuote = useCallback((q) => setQuoteState(rememberQuote(q)), [])
   const [snapshots, setSnapshots] = useState([])
   const [error, setError] = useState(null)
   const [pdf, setPdf] = useState({ blob: null, key: null, failed: false })
@@ -35,13 +39,17 @@ export default function QuoteView() {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([api.getQuote(id), api.getBusiness()])
+    Promise.all([loadQuote(id), loadBusiness()])
       .then(([q, b]) => {
         if (cancelled) return
-        setQuote(q)
+        setQuoteState(q)
         setBusiness(b)
       })
-      .catch((err) => !cancelled && setError(err))
+      .catch((err) => {
+        if (cancelled) return
+        // Offline with a copy on screen: keep showing it. Deleted, or nothing to show: say so.
+        if (err.status === 404 || !cachedQuote(id) || !cachedBusiness()) setError(err)
+      })
     refreshSnapshots()
     return () => {
       cancelled = true
@@ -147,6 +155,7 @@ export default function QuoteView() {
     setBusy('delete')
     try {
       await api.deleteQuote(id)
+      forgetQuote(id)
       const ref = quoteRef(quote.quoteNumber)
       navigate('/', { replace: true })
       toast.show(`${ref} deleted`, {
@@ -189,12 +198,7 @@ export default function QuoteView() {
     )
   }
   if (!quote || !business) {
-    return (
-      <div className="center-state" role="status">
-        <div className="spinner" />
-        <span className="visually-hidden">Loading quote</span>
-      </div>
-    )
+    return <Loader label="Opening the quote" />
   }
 
   const diff = Math.round((Number(quote.roundedTotal) - Number(quote.subtotal)) * 100) / 100
