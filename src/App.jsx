@@ -1,4 +1,5 @@
 import { Fragment, Suspense, lazy, useEffect, useState } from 'react'
+import Loader from './components/Loader'
 import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastProvider } from './components/Toast'
@@ -22,12 +23,7 @@ function PerUrl({ children }) {
 }
 
 function Loading() {
-  return (
-    <div className="center-state" role="status">
-      <div className="spinner" />
-      <span className="visually-hidden">Loading</span>
-    </div>
-  )
+  return <Loader />
 }
 
 export default function App() {

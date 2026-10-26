@@ -1,0 +1,193 @@
+.wrap {
+  /* Fast loads never flash a loader: it fades in only after a beat. */
+  animation: appear 240ms ease-out 160ms both;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--space-6);
+  min-height: 72dvh;
+  padding: var(--space-6) var(--gutter);
+}
+
+.inline {
+  min-height: 0;
+  padding: var(--space-7) 0;
+}
+
+/* ---------- the 3D logo ---------- */
+.stage {
+  position: relative;
+  perspective: 560px;
+}
+
+.house {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  animation: turn 5.6s ease-in-out infinite;
+}
+
+.tile {
+  position: absolute;
+  background-image: url('/logo-mark.png');
+  background-repeat: no-repeat;
+  backface-visibility: hidden;
+  will-change: transform, opacity;
+  animation: 2.8s cubic-bezier(0.22, 0.8, 0.24, 1) infinite both;
+}
+
+/* Each room folds in from its own side: the top two swing in like doors, the bottom two
+   drop down from the floor line. */
+.tl {
+  transform-origin: right center;
+  animation-name: fold-left;
+}
+
+.tr {
+  transform-origin: left center;
+  animation-name: fold-right;
+  animation-delay: 0.14s;
+}
+
+.bl {
+  transform-origin: center top;
+  animation-name: fold-down;
+  animation-delay: 0.28s;
+}
+
+.br {
+  transform-origin: center top;
+  animation-name: fold-down;
+  animation-delay: 0.42s;
+}
+
+.shadow {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: -18px;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(29, 27, 31, 0.22), rgba(29, 27, 31, 0));
+  animation: shadow 5.6s ease-in-out infinite;
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes turn {
+  0%,
+  100% {
+    transform: rotateX(10deg) rotateY(-26deg) translateY(0);
+  }
+  50% {
+    transform: rotateX(10deg) rotateY(26deg) translateY(-5px);
+  }
+}
+
+@keyframes fold-left {
+  0% {
+    opacity: 0.12;
+    transform: translateZ(30px) rotateY(-110deg);
+  }
+  22%,
+  76% {
+    opacity: 1;
+    transform: translateZ(0) rotateY(0);
+  }
+  94%,
+  100% {
+    opacity: 0.12;
+    transform: translateZ(30px) rotateY(-110deg);
+  }
+}
+
+@keyframes fold-right {
+  0% {
+    opacity: 0.12;
+    transform: translateZ(30px) rotateY(110deg);
+  }
+  22%,
+  76% {
+    opacity: 1;
+    transform: translateZ(0) rotateY(0);
+  }
+  94%,
+  100% {
+    opacity: 0.12;
+    transform: translateZ(30px) rotateY(110deg);
+  }
+}
+
+@keyframes fold-down {
+  0% {
+    opacity: 0.12;
+    transform: translateZ(30px) rotateX(110deg);
+  }
+  22%,
+  76% {
+    opacity: 1;
+    transform: translateZ(0) rotateX(0);
+  }
+  94%,
+  100% {
+    opacity: 0.12;
+    transform: translateZ(30px) rotateX(110deg);
+  }
+}
+
+@keyframes shadow {
+  0%,
+  100% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scaleX(0.82);
+    opacity: 0.7;
+  }
+}
+
+/* ---------- reassurance when it is slow ---------- */
+.note {
+  max-width: 260px;
+  min-height: 2.6em;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  text-align: center;
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+
+.noteShown {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .house,
+  .tile,
+  .shadow {
+    animation: none;
+  }
+
+  .stage {
+    animation: breathe 2.4s ease-in-out infinite;
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+}

@@ -10,6 +10,8 @@ import { useToast } from '../components/toastContext'
 import { addDays, daysBetween, formatRelative } from '../lib/dates'
 import { clearDraft, draftKeyFor, draftStatus, loadDraft, saveDraft } from '../lib/drafts'
 import { newId } from '../lib/ids'
+import { cachedBusiness, cachedQuote, loadBusiness, loadQuote, rememberQuote } from '../lib/cache'
+import Loader from '../components/Loader'
 import { formatRupees, quoteRef, subtotalOf, suggestedTotal } from '../lib/money'
 import { formatPhone } from '../lib/phone'
 import {
@@ -64,7 +66,16 @@ export default function QuoteBuilder() {
   useEffect(() => {
     let cancelled = false
     async function load() {
-      const businessP = api.getBusiness()
+      // Business details rarely change: use the stored copy and refresh it for next time.
+      const stored = cachedBusiness()
+      const businessP = stored ? Promise.resolve(stored) : loadBusiness()
+      if (stored) loadBusiness().catch(() => {})
+      // A copy of the quote seen in the last minute is current enough to edit (a stale version
+      // is still caught by the server's version check and offered as a conflict).
+      const quoteFor = (quoteId) => {
+        const recent = cachedQuote(quoteId, 60_000)
+        return recent ? Promise.resolve(recent) : loadQuote(quoteId)
+      }
       if (importId) {
         const [defaults, b] = await Promise.all([api.getDefaults().catch(() => null), businessP])
         if (cancelled) return
@@ -91,14 +102,14 @@ export default function QuoteBuilder() {
       let version = null
       let number = null
       if (id) {
-        const [q, b] = await Promise.all([api.getQuote(id), businessP])
+        const [q, b] = await Promise.all([quoteFor(id), businessP])
         if (cancelled) return
         setBusiness(b)
         base = formFromQuote(q)
         version = q.version
         number = q.quoteNumber
       } else if (duplicateFromId) {
-        const [q, b] = await Promise.all([api.getQuote(duplicateFromId), businessP])
+        const [q, b] = await Promise.all([quoteFor(duplicateFromId), businessP])
         if (cancelled) return
         setBusiness(b)
         base = formForDuplicate(q, b)
@@ -165,10 +176,7 @@ export default function QuoteBuilder() {
   }
   if (!form) {
     return (
-      <div className="center-state" role="status">
-        <div className="spinner" />
-        <span className="visually-hidden">Loading</span>
-      </div>
+      <Loader label="Opening the quote" />
     )
   }
 
@@ -282,6 +290,7 @@ export default function QuoteBuilder() {
       const saved = id ? await api.updateQuote(id, payload) : await api.createQuote(payload)
       clearDraft(draftKey)
       cleanPrint.current = fingerprint(form)
+      rememberQuote(saved) // the quote screen opens with it straight away
       toast.show(`${quoteRef(saved.quoteNumber)} saved`)
       navigate(`/quotes/${saved.id}`, { replace: true })
     } catch (err) {
@@ -317,7 +326,7 @@ export default function QuoteBuilder() {
 
   async function loadLatest() {
     clearDraft(draftKey)
-    const q = await api.getQuote(id)
+    const q = await loadQuote(id)
     const base = formFromQuote(q)
     serverForm.current = base
     cleanPrint.current = fingerprint(base)

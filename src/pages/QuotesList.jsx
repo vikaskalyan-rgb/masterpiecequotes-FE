@@ -7,6 +7,8 @@ import StatusBadge from '../components/StatusBadge'
 import { useToast } from '../components/toastContext'
 import { formatDate, formatMonth, formatRelative } from '../lib/dates'
 import { clearDraft, draftCustomerName, listDrafts } from '../lib/drafts'
+import { cachedQuoteList, prefetchQuote, rememberQuoteList } from '../lib/cache'
+import Loader from '../components/Loader'
 import { formatRupees, quoteRef } from '../lib/money'
 import css from './QuotesList.module.css'
 
@@ -51,7 +53,8 @@ export default function QuotesList() {
   const toast = useToast()
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('')
-  const [quotes, setQuotes] = useState(null)
+  // Coming back to this screen shows the last list at once; a fresh one replaces it.
+  const [quotes, setQuotes] = useState(() => cachedQuoteList())
   const [error, setError] = useState(null)
   const [drafts, setDrafts] = useState(() => listDrafts())
   const [importing, setImporting] = useState(false)
@@ -62,6 +65,7 @@ export default function QuotesList() {
       api
         .listQuotes({ search: debouncedSearch })
         .then((list) => {
+          if (!debouncedSearch) rememberQuoteList(list)
           setQuotes(list)
           setError(null)
         })
@@ -190,10 +194,7 @@ export default function QuotesList() {
       )}
 
       {!quotes && !error && (
-        <div className={css.loading} role="status">
-          <div className="spinner" />
-          <span className="visually-hidden">Loading quotes</span>
-        </div>
+        <Loader label="Loading quotes" inline />
       )}
 
       {quotes && visible.length === 0 && (
@@ -224,7 +225,7 @@ export default function QuotesList() {
           <ul className={css.list}>
             {group.quotes.map((q) => (
               <li key={q.id} className={css.row}>
-                <Link to={`/quotes/${q.id}`} className={css.rowLink}>
+                <Link to={`/quotes/${q.id}`} className={css.rowLink} onPointerDown={() => prefetchQuote(q.id)}>
                   <span className={css.rowMain}>
                     <span className={css.name}>{q.customerName}</span>
                     <span className={css.meta}>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
+import { cachedBusiness, loadBusiness } from '../lib/cache'
 import { draftKeyFor, saveDraft } from '../lib/drafts'
 import { reportError } from '../lib/errorReporting'
 import { ImportError, parseWorkbook } from '../lib/excelImport'
@@ -25,7 +25,9 @@ export default function ImportSheet({ open, onClose }) {
   // The business's own phones and address, so a letterhead is never taken for the customer.
   useEffect(() => {
     if (!open || business.current) return
-    api.getBusiness().then((b) => (business.current = b)).catch(() => {})
+    const stored = cachedBusiness()
+    if (stored) business.current = stored
+    else loadBusiness().then((b) => (business.current = b)).catch(() => {})
   }, [open])
 
   function close() {

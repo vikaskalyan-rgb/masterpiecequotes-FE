@@ -5,6 +5,8 @@ import Icon from '../components/Icon'
 import Sheet from '../components/Sheet'
 import { useToast } from '../components/toastContext'
 import { signOut } from '../lib/auth'
+import { loadBusiness, rememberBusiness } from '../lib/cache'
+import Loader from '../components/Loader'
 import { formatDate, todayIso } from '../lib/dates'
 import { emptySpec, emptyTerm } from '../lib/quoteForm'
 import { newId } from '../lib/ids'
@@ -38,6 +40,7 @@ function BusinessForm({ initial, onSaved }) {
         roundingStep: Number(form.roundingStep),
       })
       setForm(saved)
+      rememberBusiness(saved)
       onSaved(saved)
       toast.show('Business details saved')
     } catch (err) {
@@ -324,7 +327,7 @@ export default function Settings() {
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
-    Promise.all([api.getBusiness(), api.getDefaults()])
+    Promise.all([loadBusiness(), api.getDefaults()])
       .then(([b, d]) => {
         setBusiness(b)
         setDefaults(d)
@@ -339,7 +342,7 @@ export default function Settings() {
         <h1 className="topbar__title">Settings</h1>
       </header>
       {error && <div className="banner banner--danger" role="alert">{error}</div>}
-      {!business && !error && <div className="center-state" role="status"><div className="spinner" /></div>}
+      {!business && !error && <Loader label="Loading settings" />}
       {business && (
         <>
           <BusinessForm key={`b-${refreshKey}`} initial={business} onSaved={setBusiness} />

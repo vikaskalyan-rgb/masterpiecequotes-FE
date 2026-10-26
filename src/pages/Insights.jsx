@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import Icon from '../components/Icon'
 import { formatRupees } from '../lib/money'
 import { formatPhone } from '../lib/phone'
+import Loader from '../components/Loader'
 import css from './Insights.module.css'
 
 const monthLabel = (ym) => {
@@ -40,7 +41,7 @@ export default function Insights() {
     return (
       <div className="page">
         {header}
-        <div className="center-state" role="status"><div className="spinner" /></div>
+        <Loader label="Loading insights" />
       </div>
     )
   }
